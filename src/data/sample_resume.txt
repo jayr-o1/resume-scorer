@@ -1,0 +1,50 @@
+
+JOHN DOE
+123 Main Street, Anytown, USA 12345
+john.doe@email.com | (555) 123-4567 | linkedin.com/in/johndoe
+
+PROFESSIONAL SUMMARY
+Dedicated Full Stack Developer with 3 years of experience building modern web applications. Skilled in React, Node.js, and MongoDB with a passion for creating efficient, scalable solutions.
+
+SKILLS
+• Front-End: React, JavaScript, HTML5, CSS3, Bootstrap
+• Back-End: Node.js, Express.js, MongoDB, REST APIs
+• Tools: Git, GitHub, VS Code, Webpack, Docker
+• Other: Agile/Scrum, Unit Testing, Responsive Design
+
+WORK EXPERIENCE
+
+SENIOR FRONTEND DEVELOPER
+TechSolutions Inc. | 01/2021 - Present
+• Developed and maintained responsive web applications using React.js and modern JavaScript
+• Collaborated with UI/UX designers to implement user interfaces for improved user experience
+• Reduced application load time by 35% through code optimization and implementing lazy loading
+• Led a team of 3 junior developers on a customer portal project completed 2 weeks ahead of schedule
+
+FULL STACK DEVELOPER
+WebInnovate | 06/2019 - 12/2020
+• Built RESTful APIs using Node.js and Express with MongoDB database integration
+• Implemented authentication and authorization using JWT tokens
+• Collaborated with cross-functional teams to define, design, and ship new features
+• Maintained code quality through comprehensive unit and integration testing
+
+EDUCATION
+Bachelor of Science in Computer Science
+University of Technology | 2019
+• GPA: 3.7/4.0
+• Relevant coursework: Data Structures, Algorithms, Web Development, Database Systems
+
+CERTIFICATIONS
+• AWS Certified Developer - Associate
+• MongoDB Certified Developer
+
+PROJECTS
+E-Commerce Platform (2020)
+• Built a full-stack e-commerce application with React, Node.js, Express, and MongoDB
+• Implemented secure payment processing using Stripe API
+• Designed and implemented a responsive UI for optimal user experience
+
+Task Management Application (2019)
+• Developed a collaborative task management tool using React and Firebase
+• Implemented real-time updates using WebSockets
+• Created a drag-and-drop interface for intuitive task organization 
