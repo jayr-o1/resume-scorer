@@ -1,1 +1,0 @@
-# Utility scripts for Resume Scorer 
