@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import tempfile
 import sys
+import altair as alt
+import pandas as pd
 
 # Add the utils directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), "utils"))
@@ -14,6 +16,14 @@ st.set_page_config(page_title="AI Resume Scorer", layout="wide")
 def main():
     st.title("AI Resume Scorer")
     st.markdown("Upload a resume and job details to get AI-powered insights")
+    
+    # Industry selection
+    industries = ["tech", "finance", "healthcare", "marketing"]
+    selected_industry = st.selectbox(
+        "Select Industry (Optional)", 
+        ["Auto-detect"] + industries, 
+        help="The system will auto-detect the industry, but you can override it here"
+    )
     
     # File upload for resume
     uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
@@ -59,13 +69,17 @@ def main():
                     "qualifications": qualifications
                 }
                 
+                # Add industry override if specified
+                if selected_industry != "Auto-detect":
+                    job_details["industry_override"] = selected_industry
+                
                 # Analyze the resume
                 analysis = analyze_resume(resume_text, job_details)
                 
                 # Display the formatted results
                 st.subheader("Analysis Results")
                 
-                # Create two columns for the results
+                # Create columns for the results
                 result_col1, result_col2 = st.columns([2, 1])
                 
                 with result_col1:
@@ -81,8 +95,68 @@ def main():
                     if "skills_match" in analysis:
                         st.metric("Skills Match", analysis['skills_match']['match_ratio'])
                     
+                    if "industry" in analysis:
+                        st.metric("Industry", analysis['industry']['detected'].capitalize())
+                    
                     if "recommendation" in analysis:
-                        st.info(f"Recommendation: {analysis['recommendation']}")
+                        rec = analysis['recommendation']
+                        color = "green" if "hire" in rec.lower() else "red"
+                        st.markdown(f"<h3 style='color: {color};'>Recommendation: {rec}</h3>", unsafe_allow_html=True)
+                    
+                    # Show benchmark results if available
+                    if "benchmark" in analysis and "benchmarks" in analysis["benchmark"]:
+                        st.subheader("Industry Benchmarks")
+                        benchmarks = analysis["benchmark"]["benchmarks"]
+                        
+                        # Create data for chart
+                        chart_data = pd.DataFrame({
+                            'category': ['Skills', 'Experience', 'Education', 'Overall'],
+                            'percentage': [
+                                benchmarks['skills'], 
+                                benchmarks['experience'], 
+                                benchmarks['education'],
+                                benchmarks['overall']
+                            ]
+                        })
+                        
+                        # Create bar chart
+                        chart = alt.Chart(chart_data).mark_bar().encode(
+                            x=alt.X('percentage:Q', scale=alt.Scale(domain=[0, 100])),
+                            y=alt.Y('category:N'),
+                            color=alt.condition(
+                                alt.datum.percentage >= 70,
+                                alt.value('green'),
+                                alt.value('orange')
+                            ),
+                            tooltip=['category', 'percentage']
+                        ).properties(
+                            title='Industry Benchmark Comparison'
+                        )
+                        
+                        st.altair_chart(chart, use_container_width=True)
+                
+                # Show improvement suggestions if available
+                if "improvement_suggestions" in analysis:
+                    suggestions = analysis["improvement_suggestions"]
+                    if any(suggestions.values()):
+                        st.subheader("Improvement Suggestions")
+                        
+                        for category, items in suggestions.items():
+                            if items:
+                                with st.expander(f"{category.capitalize()} Improvements"):
+                                    for item in items:
+                                        st.markdown(f"- {item}")
+                
+                # Show missing skills as tags if available
+                if "skills_match" in analysis and analysis["skills_match"].get("missing_skills"):
+                    st.subheader("Missing Skills")
+                    missing_skills = analysis["skills_match"]["missing_skills"]
+                    
+                    # Display as horizontal pills/tags
+                    cols = st.columns(4)
+                    for i, skill in enumerate(missing_skills):
+                        col_idx = i % 4
+                        cols[col_idx].markdown(f"<div style='background-color: #f0f2f6; padding: 8px 12px; border-radius: 16px; margin: 4px; display: inline-block;'>{skill}</div>", unsafe_allow_html=True)
                 
                 # Show extracted text (collapsible)
                 with st.expander("View Extracted Resume Text"):

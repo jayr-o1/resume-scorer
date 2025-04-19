@@ -1,0 +1,6 @@
+{
+    "summary": "We are seeking a Senior Full Stack Developer with 7+ years of experience in building scalable cloud applications. The ideal candidate will lead development efforts for our AI-powered platform, mentor junior developers, and collaborate with our product team to implement complex features.",
+    "duties": "Design and implement complex full-stack applications using React, Node.js, and GraphQL. Build and optimize PostgreSQL database schemas and queries. Implement CI/CD pipelines and containerize applications using Docker and Kubernetes. Lead architecture discussions and make critical technical decisions. Mentor junior developers and perform code reviews. Collaborate with the data science team to integrate ML models into production.",
+    "skills": "React, TypeScript, Node.js, Express, GraphQL, PostgreSQL, MongoDB, Redis, AWS/Azure, Docker, Kubernetes, CI/CD, TDD, Microservices architecture, REST API design, Performance optimization, System design",
+    "qualifications": "Bachelor's degree in Computer Science or related field. 7+ years of experience in full-stack development. Experience with cloud-native application architecture. Strong understanding of DevOps practices. AWS/Azure certification preferred. Experience mentoring junior developers."
+}
