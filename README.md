@@ -1,129 +1,202 @@
-# AI Resume Scorer
+# Resume Scorer
 
-An advanced tool that analyzes resumes against job descriptions to determine candidate suitability using local AI models.
+## About
 
-## Features
+Resume Scorer is an advanced AI-powered tool that analyzes resumes against job descriptions using natural language processing and semantic matching. The system helps recruiters and job seekers by providing objective assessments of how well a resume matches specific job requirements, offering visualization tools and actionable recommendations for improvement.
 
--   PDF resume text extraction
--   Advanced analysis against job descriptions (summary, duties, skills, qualifications)
--   Industry detection and industry-specific scoring
--   Named Entity Recognition (NER) for skill identification
--   Benchmarking against industry standards
--   Resume improvement suggestions
--   Visual charts and metrics
--   Caching for faster repeat analyses
--   Web interface with modern UI elements
+The platform combines AI, NLP, and data visualization to deliver accurate, consistent resume evaluations that eliminate human bias and increase efficiency in the hiring process. It supports both individual resume analysis and batch processing for recruitment teams.
 
-## Project Structure
+## How It Works
 
-```
-resume-scorer/
-├── src/                      # Main application directory
-│   ├── utils/                # Utility functions
-│   │   ├── pdf_extractor.py  # PDF text extraction
-│   │   └── analyzer.py       # Enhanced analysis engine
-│   ├── data/                 # Sample data
-│   │   ├── sample_resume.txt # Sample resume text file
-│   │   ├── sample_resume.pdf # Sample resume PDF
-│   │   ├── failing_resume.txt # Example of a poor match resume
-│   │   ├── failing_resume.pdf # PDF of poor match resume
-│   │   └── tech_job.json     # Sample tech job description
-│   ├── templates/            # Any templates for outputs
-│   └── app.py                # Streamlit web application
-├── scripts/                  # Utility scripts
-│   └── create_pdf.py         # Script to create PDF from text
-├── model_cache/              # Cache directory for faster analysis
-├── requirements.txt          # Dependencies
-└── .gitignore                # Git ignore file
+1. **Text Extraction**: Enhanced PDF extraction with multiple fallback methods and language detection
+2. **Skill Detection**: Context-aware skill detection using a custom skill ontology
+3. **Semantic Matching**: Advanced semantic matching between resume and job requirements
+4. **Visualization**: Generation of insights with interactive visualizations
+5. **Recommendations**: Tailored improvement suggestions based on analysis results
+
+## Installation
+
+### Using Docker (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/resume-scorer.git
+cd resume-scorer
+
+# Build the Docker image
+docker build -t resume-scorer .
+
+# Run the Streamlit app
+docker run -p 8501:8501 resume-scorer streamlit
+
+# Or run the API server
+docker run -p 8000:8000 resume-scorer api
 ```
 
-## Setup
+### Local Installation
 
-1. Clone this repository
-2. Install dependencies:
-    ```
-    pip install -r requirements.txt
-    ```
-3. If spaCy models are not automatically installed, run:
-    ```
-    python -m spacy download en_core_web_sm
-    ```
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/resume-scorer.git
+cd resume-scorer
+
+# Create a virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Download SpaCy model
+python -m spacy download en_core_web_sm
+
+# Run the Streamlit app
+cd src
+streamlit run app.py
+
+# Or run the API server
+cd src
+uvicorn api:app --reload
+```
 
 ## Usage
 
-### Web Interface
+### Streamlit Web Interface
 
-Run the Streamlit application:
+The Streamlit interface provides three main tabs:
 
-```
-cd src
-streamlit run app.py
-```
+1. **Single Resume Analysis**:
 
-The web interface allows you to:
+    - Upload a resume PDF
+    - Enter job details (summary, duties, skills, qualifications)
+    - Get a comprehensive analysis with visualizations
 
--   Upload a resume PDF
--   Enter job details manually or use provided samples
--   Select or auto-detect the industry
--   Get detailed analysis with visualizations
--   View improvement suggestions
--   See benchmarking against industry standards
+2. **Batch Processing**:
 
-### Create Sample PDF
+    - Upload multiple resumes
+    - Enter common job details
+    - Compare and rank candidates
 
-Generate a PDF from a text file resume:
+3. **Skill Ontology Management**:
+    - View the skill ontology database
+    - Add new skills with aliases and related skills
 
-```
-cd scripts
-python create_pdf.py path/to/text_file.txt output_file.pdf
-```
+### REST API
 
-## How it Works
+The system also provides a REST API for integration with other systems:
 
-The system:
+```bash
+# Authentication (get token)
+curl -X POST "http://localhost:8000/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=demo&password=password"
 
-1. Extracts text from a PDF resume
-2. Detects or allows manual selection of industry
-3. Uses embedding models for semantic comparison
-4. Employs NER for enhanced skill extraction
-5. Calculates weighted scores based on industry standards
-6. Benchmarks against industry expectations
-7. Provides detailed analysis with visualizations
-8. Generates tailored improvement suggestions
-
-## Analysis Components
-
--   **Industry Detection**: Automatically identifies the most relevant industry
--   **Semantic Analysis**: Uses sentence-transformers for advanced text comparison
--   **NER Skill Detection**: Finds skills not explicitly mentioned
--   **Industry-Based Weighting**: Different score weighting per industry
--   **Benchmarking**: Compares resume against industry standards
--   **Caching**: Stores analysis results for faster repeat processing
--   **Improvement Suggestions**: Tailored recommendations to enhance the resume
-
-## Output Format
-
-```
-AI Insights
-Match Percentage: XX%
-Industry: [Detected Industry]
-Skills Match: X/Y skills matched
-Additional Skills Detected: [Skills found via NER]
-Experience: Required vs. Applicant comparison
-Education: Qualification assessment
-Certifications: Any relevant certifications
-Resume Keywords: Keyword match rate
-Industry Benchmarks: Skills, Experience, Education, Overall
-Improvement Suggestions: Specific recommendations
-Recommendation: Hire recommendation status
+# Analyze a resume
+curl -X POST "http://localhost:8000/analyze" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "resume=@path/to/resume.pdf" \
+  -F "job_details.summary=Job summary text" \
+  -F "job_details.skills=Required skills"
 ```
 
-## Technology Stack
+## Key Features & Improvements
 
--   **Python**: Core programming language
--   **Streamlit**: Web interface
--   **Sentence-Transformers**: Semantic text comparison
--   **SpaCy**: Named Entity Recognition
--   **PDFPlumber/PyPDF2**: PDF text extraction
--   **Scikit-learn**: Machine learning utilities
--   **Pandas & Altair**: Data processing and visualization
+### Performance & Scalability
+
+-   **Upgraded Model**: Powerful `all-mpnet-base-v2` model with ONNX runtime quantization for faster inference
+-   **Parallel Processing**: Multi-core resume processing with joblib for batch analysis
+-   **Database-Backed Cache**: SQLite database for faster lookups of analysis results and embeddings
+
+### Accuracy & Analysis
+
+-   **Skill Ontology**: Normalizes skill variations (e.g., "JS" → "JavaScript") with context-aware proficiency detection
+-   **Enhanced Experience Extraction**: Detects job titles and extracts employment duration with total experience calculation
+-   **Education & Certification Analysis**: Validates degrees and certifications with impact assessment
+-   **Semantic Matching**: Two-stage matching process with confidence metrics for extracted data
+
+### User Experience
+
+-   **Interactive Feedback**: Tailored resume improvement suggestions with alternative skills recommendations
+-   **Advanced Visualizations**: Radar charts for skills/experience/education, comparison charts, and keyword density clouds
+-   **Explainability**: Confidence scores, skill proficiency details, and salary estimations
+
+### Integration & Deployment
+
+-   **Comprehensive REST API**: FastAPI with JWT authentication, user roles, and rate limiting
+-   **Multi-Language Support**: Detection and translation for non-English resumes
+-   **Flexible Deployment**: Docker containerization with support for AWS, GCP, and serverless options
+
+### Additional Capabilities
+
+-   **ATS Compliance Checking**: Format analysis and section detection
+-   **Exportable Reports**: Shareable visualizations and standardized JSON exports
+-   **Testing Framework**: Unit tests and test utilities for quality assurance
+
+## Project Structure
+
+-   `src/` - Main source code
+    -   `app.py` - Streamlit web interface
+    -   `api.py` - FastAPI REST API
+    -   `utils/` - Core functionality
+        -   `analyzer.py` - Resume analysis logic
+        -   `pdf_extractor.py` - PDF text extraction
+        -   `skill_ontology.py` - Skill normalization and detection
+        -   `visualizations.py` - Chart and visualization generation
+-   `model_cache/` - Cached models and embeddings
+-   `requirements.txt` - Python dependencies
+-   `Dockerfile` - Docker containerization
+
+## Technical Implementation Details
+
+### Model Optimization
+
+-   **Embedding Caching**: Database system to cache embeddings for reuse across analyses
+-   **Structured Storage**: Separate tables for analysis results and embeddings
+-   **Thread-safety**: Thread-local database connections for concurrent access
+
+### Skill Ontology Design
+
+-   **Skill Relationships**: Mapped relationships between skills to suggest alternatives for missing skills
+-   **Context-aware Detection**: Detection of skill proficiency levels based on context
+
+### Semantic Similarity Technology
+
+-   **Two-stage Matching**: Direct pattern matching combined with semantic similarity
+-   **Confidence Metrics**: Detailed confidence scoring for all extracted data points
+
+### Deployment Infrastructure
+
+-   **Run Scripts**: Easy running in different modes (API, UI)
+-   **Deploy Scripts**: Streamlined deployment scripts for cloud environments
+-   **Code Quality**: Modular architecture with clean interfaces between components
+
+## Running Tests
+
+```bash
+# Run unit tests
+python -m pytest tests/
+
+# Run with coverage
+python -m pytest --cov=src tests/
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+-   [Sentence-Transformers](https://www.sbert.net/) for embedding models
+-   [SpaCy](https://spacy.io/) for NER and linguistic processing
+-   [Streamlit](https://streamlit.io/) for the web interface
+-   [FastAPI](https://fastapi.tiangolo.com/) for the API framework

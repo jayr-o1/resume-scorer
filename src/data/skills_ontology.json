@@ -1,0 +1,209 @@
+{
+  "python": {
+    "aliases": [
+      "py",
+      "python3",
+      "python2",
+      "pypy"
+    ],
+    "category": "programming_language",
+    "related": [
+      "django",
+      "flask",
+      "pandas",
+      "numpy",
+      "tensorflow",
+      "pytorch"
+    ]
+  },
+  "javascript": {
+    "aliases": [
+      "js",
+      "ecmascript",
+      "es6",
+      "node.js",
+      "nodejs"
+    ],
+    "category": "programming_language",
+    "related": [
+      "typescript",
+      "react",
+      "vue",
+      "angular",
+      "node"
+    ]
+  },
+  "java": {
+    "aliases": [
+      "core java",
+      "jdk",
+      "java se",
+      "java ee"
+    ],
+    "category": "programming_language",
+    "related": [
+      "spring",
+      "hibernate",
+      "maven",
+      "junit",
+      "gradle"
+    ]
+  },
+  "react": {
+    "aliases": [
+      "reactjs",
+      "react.js",
+      "react js"
+    ],
+    "category": "framework",
+    "related": [
+      "javascript",
+      "jsx",
+      "hooks",
+      "redux"
+    ]
+  },
+  "angular": {
+    "aliases": [
+      "angularjs",
+      "angular2+",
+      "angular 2",
+      "angular js"
+    ],
+    "category": "framework",
+    "related": [
+      "typescript",
+      "javascript",
+      "rxjs"
+    ]
+  },
+  "docker": {
+    "aliases": [
+      "container",
+      "containerization"
+    ],
+    "category": "devops",
+    "related": [
+      "kubernetes",
+      "containers",
+      "podman"
+    ]
+  },
+  "kubernetes": {
+    "aliases": [
+      "k8s",
+      "kube"
+    ],
+    "category": "devops",
+    "related": [
+      "docker",
+      "containers",
+      "helm",
+      "istio"
+    ]
+  },
+  "sql": {
+    "aliases": [
+      "structured query language"
+    ],
+    "category": "database",
+    "related": [
+      "mysql",
+      "postgresql",
+      "oracle",
+      "sql server"
+    ]
+  },
+  "mongodb": {
+    "aliases": [
+      "mongo",
+      "document db"
+    ],
+    "category": "database",
+    "related": [
+      "nosql",
+      "mongoose",
+      "atlas"
+    ]
+  },
+  "aws": {
+    "aliases": [
+      "amazon web services",
+      "amazon aws",
+      "amazon cloud"
+    ],
+    "category": "cloud",
+    "related": [
+      "ec2",
+      "s3",
+      "lambda",
+      "dynamodb",
+      "cloudformation"
+    ]
+  },
+  "azure": {
+    "aliases": [
+      "microsoft azure",
+      "azure cloud",
+      "microsoft cloud"
+    ],
+    "category": "cloud",
+    "related": [
+      "azure functions",
+      "cosmos db",
+      "azure devops"
+    ]
+  },
+  "machine learning": {
+    "aliases": [
+      "ml",
+      "machine-learning"
+    ],
+    "category": "data_science",
+    "related": [
+      "scikit-learn",
+      "tensorflow",
+      "pytorch",
+      "data science"
+    ]
+  },
+  "tensorflow": {
+    "aliases": [
+      "tf",
+      "tensor flow"
+    ],
+    "category": "data_science",
+    "related": [
+      "machine learning",
+      "deep learning",
+      "keras",
+      "neural networks"
+    ]
+  },
+  "communication": {
+    "aliases": [
+      "communication skills",
+      "verbal communication",
+      "written communication"
+    ],
+    "category": "soft_skill",
+    "related": [
+      "teamwork",
+      "interpersonal",
+      "presentation"
+    ]
+  },
+  "leadership": {
+    "aliases": [
+      "team lead",
+      "team leader",
+      "tech lead"
+    ],
+    "category": "soft_skill",
+    "related": [
+      "management",
+      "mentoring",
+      "coaching"
+    ]
+  }
+}
