@@ -1,0 +1,56 @@
+SARAH JOHNSON
+123 Tech Avenue, San Francisco, CA 94105
+sarahjohnson@email.com | (415) 555-7890
+linkedin.com/in/sarahjohnson
+
+SUMMARY
+Junior web developer with 2 years of experience building responsive web applications. 
+Strong knowledge of JavaScript, React, and basic Node.js. Seeking to grow my skills in 
+full-stack development and expand my experience with cloud technologies.
+
+EDUCATION
+Bachelor of Science in Information Technology
+San Francisco State University, 2021
+• GPA: 3.5/4.0
+• Relevant Coursework: Data Structures, Web Development, Database Systems
+• Senior Project: Built a student housing marketplace web application
+
+CERTIFICATIONS
+• AWS Cloud Practitioner (2022)
+• Responsive Web Design - freeCodeCamp (2021)
+
+TECHNICAL SKILLS
+• Frontend: React, JavaScript, HTML5, CSS3, TypeScript (basic)
+• Backend: Node.js (basic), Express (basic)
+• Databases: MongoDB, MySQL
+• Tools: Git, GitHub, VS Code
+• Other: REST APIs, Responsive Design
+
+PROFESSIONAL EXPERIENCE
+
+Junior Web Developer | TechStart Agency
+June 2021 - Present (2 years)
+• Develop and maintain responsive web applications using React.js
+• Collaborate with designers to implement UI/UX designs
+• Debug and fix issues across different browsers and devices
+• Implement REST API integrations for client projects
+• Participate in code reviews and team meetings
+
+Web Development Intern | LocalTech Solutions
+Jan 2021 - May 2021 (5 months)
+• Assisted in building web components using HTML, CSS, and JavaScript
+• Learned fundamentals of React.js through mentorship program
+• Developed and maintained documentation for internal projects
+• Tested web applications for bugs and browser compatibility
+
+PROJECTS
+
+E-commerce Platform (Personal Project)
+• Built a small e-commerce site with React frontend and Node.js/Express backend
+• Implemented user authentication, product catalog, and shopping cart functionality
+• Used MongoDB for data storage and Stripe for payment processing
+
+Weather Dashboard Application
+• Created a weather dashboard using React that consumes OpenWeather API
+• Implemented geolocation services and city search functionality
+• Deployed application using GitHub Pages 
