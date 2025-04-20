@@ -12,8 +12,6 @@ from typing import Optional, Dict, List, Tuple
 
 # For enhanced extraction
 from langdetect import detect, LangDetectException
-from unstructured.partition.pdf import partition_pdf
-from unstructured.cleaners.core import clean_extra_whitespace
 
 # PyPDF2 as a fallback
 try:
@@ -25,6 +23,14 @@ except ImportError:
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def clean_extra_whitespace(text: str) -> str:
+    """Clean extra whitespace from text (simplified version of unstructured's cleaner)"""
+    # Replace multiple spaces with a single space
+    text = re.sub(r'\s+', ' ', text)
+    # Remove spaces at the beginning and end of lines
+    text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)
+    return text.strip()
 
 def extract_text_with_pdfplumber(pdf_file: str) -> str:
     """Extract text from a PDF file using pdfplumber"""
@@ -54,16 +60,6 @@ def extract_text_with_pypdf2(pdf_file: str) -> str:
         return clean_extra_whitespace(text.strip())
     except Exception as e:
         logger.error(f"PyPDF2 extraction failed: {e}")
-        return ""
-
-def extract_text_with_unstructured(pdf_file: str) -> str:
-    """Extract text using unstructured library for better extraction quality"""
-    try:
-        elements = partition_pdf(pdf_file, strategy="hi_res")
-        text = "\n\n".join([str(element) for element in elements])
-        return clean_extra_whitespace(text.strip())
-    except Exception as e:
-        logger.error(f"unstructured extraction failed: {e}")
         return ""
 
 def detect_language(text: str) -> str:
@@ -114,7 +110,6 @@ def extract_text_from_pdf(pdf_file: str, translate: bool = False) -> Dict:
     
     # Try different extraction methods in order of preference
     extraction_methods = [
-        ("unstructured", extract_text_with_unstructured),
         ("pdfplumber", extract_text_with_pdfplumber),
         ("pypdf2", extract_text_with_pypdf2)
     ]
