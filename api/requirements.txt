@@ -1,1 +1,4 @@
--r ../requirements-vercel.txt 
+-r ../requirements-vercel.txt
+fastapi>=0.110.0
+uvicorn>=0.25.0
+python-multipart>=0.0.6 
