@@ -3,7 +3,7 @@ services:
     name: resume-scorer
     env: python
     buildCommand: bash render-build.sh
-    startCommand: python -m streamlit run src/app.py
+    startCommand: streamlit run src/app.py --server.port=$PORT --server.address=0.0.0.0
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
@@ -19,4 +19,4 @@ services:
     disk:
       name: resume-scorer-data
       mountPath: /data
-      sizeGB: 1 
+      sizeGB: 2 

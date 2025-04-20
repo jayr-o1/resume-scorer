@@ -2,6 +2,11 @@
 # Exit on error
 set -o errexit
 
+# Install system dependencies
+if [ -f apt.txt ]; then
+  cat apt.txt | xargs apt-get update && apt-get install -y
+fi
+
 # Install dependencies with optimized requirements for Render
 pip install -r requirements-render.txt
 
@@ -9,6 +14,9 @@ pip install -r requirements-render.txt
 if ! pip show en-core-web-sm > /dev/null; then
   python -m spacy download en_core_web_sm
 fi
+
+# Download NLTK data
+python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
 
 # Create any necessary directories
 mkdir -p ~/.streamlit
