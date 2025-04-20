@@ -17,6 +17,7 @@ onnxruntime>=1.16.0
 packaging>=23.0
 redis>=5.0.0
 unstructured>=0.10.0
+pi-heif>=0.13.0
 langdetect>=1.0.9
 wordcloud>=1.9.0
 matplotlib>=3.7.0
