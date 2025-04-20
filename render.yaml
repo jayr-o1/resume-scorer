@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: resume-scorer
+    env: python
+    buildCommand: bash render-build.sh
+    startCommand: python -m streamlit run src/app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: PORT
+        value: 8501
+      - key: STREAMLIT_SERVER_PORT
+        value: 8501
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: "true"
+      - key: STREAMLIT_SERVER_ENABLE_CORS
+        value: "false"
+    plan: free
+    disk:
+      name: resume-scorer-data
+      mountPath: /data
+      sizeGB: 1 

@@ -76,4 +76,7 @@ Thumbs.db
 
 # Log files
 logs/
-*.log 
+*.log
+
+# Render specific
+.render/ 

@@ -40,41 +40,15 @@ streamlit run app.py
 
 ## Deployment
 
-### API Deployment to Vercel
+### API Deployment to Render
 
-The Resume Scorer API is ready for Vercel deployment with a consolidated API implementation in the `api/` directory. To deploy:
+The Resume Scorer API is ready for Render deployment. For detailed instructions, please refer to the [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md) file.
 
-1. **Ensure you have a Vercel account** - Sign up at [vercel.com](https://vercel.com) if needed
-
-2. **Install the Vercel CLI:**
-
-    ```bash
-    npm install -g vercel
-    ```
-
-3. **Deploy to Vercel:**
-
-    ```bash
-    vercel
-    ```
-
-4. **For production deployment:**
-    ```bash
-    vercel --prod
-    ```
-
-Alternatively, you can set up automatic deployments via GitHub:
-
-1. Push your code to GitHub
-2. Create a new project on Vercel and connect to your GitHub repository
-3. Configure settings for your deployment
-4. Deploy your project
-
-**Important Notes for Vercel Deployment:**
-
--   The API uses the configuration in `vercel.json` which points to `api/index.py`
--   The API provides public endpoints that don't require authentication
--   The Vercel deployment is for the API only - the Streamlit UI must be run separately
+Key features of the Render deployment:
+- Optimized for smaller footprint (under 250MB)
+- Uses CPU-only versions of PyTorch and other large libraries
+- Includes persistent storage for uploaded files and cached models
+- Free tier compatible
 
 ## Usage
 
@@ -104,7 +78,7 @@ The system provides a REST API that can be accessed without authentication, matc
 
 ```bash
 # Analyze a resume (public endpoint)
-curl -X POST "https://your-api-url.vercel.app/analyze" \
+curl -X POST "https://your-api-url.onrender.com/analyze" \
   -F "resume=@path/to/resume.pdf" \
   -F "job_summary=Job summary text" \
   -F "key_duties=Key responsibilities" \
@@ -112,14 +86,14 @@ curl -X POST "https://your-api-url.vercel.app/analyze" \
   -F "qualifications=Required qualifications"
 
 # List all skills
-curl -X GET "https://your-api-url.vercel.app/skills"
+curl -X GET "https://your-api-url.onrender.com/skills"
 
 # Extract text and sections from a resume
-curl -X POST "https://your-api-url.vercel.app/debug/extract" \
+curl -X POST "https://your-api-url.onrender.com/debug/extract" \
   -F "resume=@path/to/resume.pdf"
 
 # Health check
-curl -X GET "https://your-api-url.vercel.app/health"
+curl -X GET "https://your-api-url.onrender.com/health"
 ```
 
 For more details on the API endpoints, request/response formats, and examples, see the [API_README.md](API_README.md) file.
@@ -150,7 +124,7 @@ For more details on the API endpoints, request/response formats, and examples, s
 ### Integration & Deployment
 
 -   **Public API Endpoints**: Accessible without authentication, matching Streamlit functionality
--   **Vercel-Ready**: Optimized for serverless deployment on Vercel
+-   **Render-Ready**: Optimized for deployment on Render's cloud platform
 -   **Multi-Language Support**: Detection and translation for non-English resumes
 -   **Comprehensive Error Handling**: Robust error handling and logging for production use
 
@@ -171,12 +145,14 @@ For more details on the API endpoints, request/response formats, and examples, s
         -   `pdf_extractor.py` - PDF text extraction
         -   `skill_ontology.py` - Skill normalization and detection
         -   `visualizations.py` - Chart and visualization generation
--   `api/` - Vercel deployment API
+-   `api/` - API implementation
     -   `index.py` - Main API entry point (public endpoints)
     -   `requirements.txt` - API-specific dependencies
 -   `requirements.txt` - Python dependencies
--   `requirements-vercel.txt` - Optimized dependencies for Vercel
--   `vercel.json` - Vercel configuration
+-   `requirements-render.txt` - Optimized dependencies for Render
+-   `render.yaml` - Render configuration
+-   `render-build.sh` - Build script for Render deployment
+-   `RENDER_DEPLOYMENT.md` - Detailed Render deployment instructions
 -   `API_README.md` - Detailed API documentation
 
 ## Technical Implementation Details
@@ -199,10 +175,9 @@ For more details on the API endpoints, request/response formats, and examples, s
 
 ### Deployment Infrastructure
 
--   **Vercel Configuration**: Easy deployment to Vercel's serverless platform
--   **API Entry Point**: Clean separation of concerns for API deployment
--   **Environment Management**: Secure handling of API keys and secrets
--   **Code Quality**: Modular architecture with clean interfaces between components
+-   **Render Configuration**: Easy deployment to Render's cloud platform
+-   **Optimized Dependencies**: Smaller footprint for deployment
+-   **Environment Configuration**: Production-ready environment settings
 
 ## Running Tests
 

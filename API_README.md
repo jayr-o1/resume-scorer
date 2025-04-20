@@ -197,15 +197,11 @@ Check if the API is running.
 
 ## Deployment
 
-### Vercel Deployment
+### Render Deployment
 
-The API is configured for deployment on Vercel. The configuration is in the `vercel.json` file.
+The API is configured for deployment on Render. The configuration is in the `render.yaml` file.
 
-To deploy:
-
-1. Install Vercel CLI: `npm install -g vercel`
-2. Run: `vercel` in the project directory
-3. Follow the prompts to deploy
+For deployment instructions, please refer to the [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md) file.
 
 ## Architecture
 
