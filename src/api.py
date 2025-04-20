@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union, Any
 from functools import lru_cache
+import traceback
 
 import jwt
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, BackgroundTasks, Header, Request, status
@@ -24,13 +25,23 @@ from pydantic import BaseModel, Field
 from utils.pdf_extractor import extract_text_from_pdf, extract_resume_sections
 from utils.analyzer import analyze_resume, batch_process_resumes
 from utils.skill_ontology import get_skill_ontology
+from utils.visualizations import (
+    create_skill_radar, 
+    create_comparison_chart,
+    create_missing_skills_chart,
+    create_detailed_skills_breakdown
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Load environment variables from .env file if available
+from dotenv import load_dotenv
+load_dotenv()
+
 # Config
-API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "CHANGE_THIS_TO_A_RANDOM_SECRET")
+API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "fallback_secret_key")  # Fallback for local development
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
@@ -104,6 +115,7 @@ class ResumeAnalysisResponse(BaseModel):
     confidence_scores: Optional[Dict] = None
     salary_estimate: Optional[Dict] = None
     error: Optional[str] = None
+    resume_sections: Optional[Dict] = None  # Added to match the Streamlit app response
 
 class BatchAnalysisRequest(BaseModel):
     job_details: JobDetails
@@ -243,18 +255,18 @@ async def rate_limit_middleware(request: Request, call_next):
         # Add rate limit headers
         response = await call_next(request)
         response.headers["X-Rate-Limit-Limit"] = str(RATE_LIMIT_MAX_REQUESTS.get(user_tier, 5))
-        response.headers["X-Rate-Limit-Remaining"] = str(RATE_LIMIT_MAX_REQUESTS.get(user_tier, 5) - len(rate_limit_store[rate_key]))
+        response.headers["X-Rate-Limit-Remaining"] = str(
+            RATE_LIMIT_MAX_REQUESTS.get(user_tier, 5) - len(rate_limit_store.get(rate_key, []))
+        )
         response.headers["X-Rate-Limit-Reset"] = str(window_start + RATE_LIMIT_WINDOW)
-        
         return response
     except Exception as e:
-        logger.error(f"Error in rate limit middleware: {e}")
+        logger.error(f"Error in rate limiting: {e}")
         return await call_next(request)
 
-# Auth endpoints
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """Get JWT token with username and password"""
+    """Get an access token for API authentication"""
     user = authenticate_user(fake_users_db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -270,19 +282,19 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 @app.get("/users/me", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
-    """Get current user information"""
+    """Get the currently authenticated user"""
     return current_user
 
-# Core API endpoints
-@app.post("/analyze", response_model=ResumeAnalysisResponse)
-async def analyze_resume_endpoint(
+# Authenticated analyze endpoint (original - kept for backward compatibility)
+@app.post("/analyze/auth", response_model=ResumeAnalysisResponse)
+async def analyze_resume_auth_endpoint(
     resume: UploadFile = File(...),
     job_details: JobDetails = Depends(),
     translate: bool = Form(False),
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Analyze a resume against job details
+    Analyze a resume against job details (authenticated version)
     
     - **resume**: PDF resume file
     - **job_details**: Job details including summary, duties, skills, etc.
@@ -300,32 +312,186 @@ async def analyze_resume_endpoint(
         # Clean up temporary file
         os.unlink(temp_file_path)
         
-        if not extraction_result or not extraction_result["text"]:
+        logger.info(f"Extraction result: {extraction_result}")
+        
+        if not extraction_result:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Could not extract text from the PDF"
+                detail="Could not extract text from the PDF - extraction result is None"
             )
+            
+        if not extraction_result.get("text"):
+            # Fix the case where text is None - convert to empty string
+            extraction_result["text"] = ""
         
         # Convert job details to dict
         job_dict = job_details.dict(exclude_unset=True)
         
+        # Ensure job details are not empty
+        if not any(job_dict.values()):
+            job_dict = {
+                "summary": "Not provided",
+                "skills": "Not specified"
+            }
+        
         # Analyze the resume
-        analysis = analyze_resume(extraction_result, job_dict)
+        try:
+            analysis = analyze_resume(extraction_result, job_dict)
+            
+            # Get resume sections for enhanced response
+            resume_sections = extract_resume_sections(extraction_result["text"])
+            if resume_sections:
+                analysis["resume_sections"] = resume_sections
+                
+            return analysis
+        except Exception as e:
+            # Detailed debugging for analysis errors
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Analysis error: {e}\n{error_trace}")
+            
+            # Return a simplified analysis with error
+            return {
+                "error": str(e),
+                "match_percentage": "0%",
+                "recommendation": "Error during analysis",
+                "skills_match": {},
+                "experience": {},
+                "education": {},
+                "certifications": {},
+                "keywords": {},
+                "industry": {}
+            }
         
-        # Check for errors
-        if "error" in analysis:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=analysis["error"]
-            )
-        
-        return analysis
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error analyzing resume: {e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Error analyzing resume: {e}\n{error_trace}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
+        )
+
+# New analyze endpoint (public) - matches the Streamlit interface
+@app.post("/analyze", response_model=ResumeAnalysisResponse)
+async def analyze_resume_endpoint(
+    resume: UploadFile = File(...),
+    job_summary: str = Form(None),
+    key_duties: str = Form(None),
+    essential_skills: str = Form(None),
+    qualifications: str = Form(None),
+    industry_override: str = Form(None),
+    translate: bool = Form(False)
+):
+    """
+    Analyze a resume against job details
+    
+    - **resume**: PDF resume file
+    - **job_summary**: Job summary text 
+    - **key_duties**: Key duties and responsibilities
+    - **essential_skills**: Essential skills required
+    - **qualifications**: Required qualifications and experience
+    - **industry_override**: Override for auto-detected industry
+    - **translate**: Whether to translate non-English resumes to English
+    """
+    try:
+        # Save the uploaded file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_file.write(await resume.read())
+            temp_file_path = temp_file.name
+        
+        # Extract text from PDF with enhanced methods
+        extraction_result = extract_text_from_pdf(temp_file_path, translate=translate)
+        
+        # Clean up temporary file
+        os.unlink(temp_file_path)
+        
+        logger.info(f"Extraction result: {extraction_result}")
+        
+        if not extraction_result:
+            return JSONResponse(
+                status_code=422,
+                content={"error": "Could not extract text from the PDF", 
+                         "match_percentage": "0%",
+                         "recommendation": "Please provide a valid PDF resume",
+                         "skills_match": {},
+                         "experience": {},
+                         "education": {},
+                         "certifications": {},
+                         "keywords": {},
+                         "industry": {}}
+            )
+            
+        if not extraction_result.get("text"):
+            # Fix the case where text is None - convert to empty string
+            extraction_result["text"] = ""
+        
+        # Convert job details to dict
+        job_dict = {
+            "summary": job_summary or "",
+            "duties": key_duties or "",
+            "skills": essential_skills or "",
+            "qualifications": qualifications or ""
+        }
+        
+        # Add industry override if provided
+        if industry_override and industry_override != "Auto-detect":
+            job_dict["industry_override"] = industry_override
+        
+        # Ensure job details are not empty
+        if not any(value for value in job_dict.values() if value):
+            job_dict = {
+                "summary": "Not provided",
+                "skills": "Not specified"
+            }
+        
+        # Analyze the resume
+        try:
+            analysis = analyze_resume(extraction_result, job_dict)
+            
+            # Get resume sections for enhanced response
+            resume_sections = extract_resume_sections(extraction_result["text"])
+            if resume_sections:
+                analysis["resume_sections"] = resume_sections
+                
+            return analysis
+            
+        except Exception as e:
+            # Return a simplified analysis with error
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Analysis error: {e}\n{error_trace}")
+            
+            return {
+                "error": str(e),
+                "match_percentage": "0%",
+                "recommendation": "Error during analysis",
+                "skills_match": {},
+                "experience": {},
+                "education": {},
+                "certifications": {},
+                "keywords": {},
+                "industry": {}
+            }
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Error analyzing resume: {e}\n{error_trace}")
+        
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e),
+                    "match_percentage": "0%",
+                    "recommendation": "Server error during analysis",
+                    "skills_match": {},
+                    "experience": {},
+                    "education": {},
+                    "certifications": {},
+                    "keywords": {},
+                    "industry": {}}
         )
 
 @app.post("/batch-analyze")
@@ -375,12 +541,22 @@ async def get_resume_sections(
         detail="This endpoint is a placeholder and not yet implemented"
     )
 
-@app.get("/skills")
-async def list_skills(
+# Authenticated skills endpoint
+@app.get("/skills/auth")
+async def list_skills_auth(
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    List all skills in the ontology
+    List all skills in the ontology (authenticated)
+    """
+    skill_ontology = get_skill_ontology()
+    return {"skills": list(skill_ontology.skills_map.keys())}
+
+# Public skills endpoint
+@app.get("/skills")
+async def list_skills():
+    """
+    List all skills in the ontology (public version)
     """
     skill_ontology = get_skill_ontology()
     return {"skills": list(skill_ontology.skills_map.keys())}
@@ -433,6 +609,47 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-# Run the API server
+# Debug endpoint for PDF extraction
+@app.post("/debug/extract-pdf")
+async def debug_extract_pdf(
+    resume: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Debug endpoint to extract text from a PDF resume
+    
+    - **resume**: PDF resume file
+    """
+    try:
+        # Save the uploaded file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_file.write(await resume.read())
+            temp_file_path = temp_file.name
+        
+        # Extract text with enhanced methods
+        extraction_result = extract_text_from_pdf(temp_file_path)
+        
+        # Also extract sections
+        if extraction_result and extraction_result.get("text"):
+            sections = extract_resume_sections(extraction_result["text"])
+        else:
+            sections = {}
+        
+        # Clean up
+        os.unlink(temp_file_path)
+        
+        return {
+            "status": "success",
+            "full_result": extraction_result,
+            "sections": sections
+        }
+    except Exception as e:
+        logger.error(f"Error extracting PDF: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+# For running the API directly
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("api:app", host="0.0.0.0", port=8000) 

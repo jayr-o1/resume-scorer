@@ -16,23 +16,6 @@ The platform combines AI, NLP, and data visualization to deliver accurate, consi
 
 ## Installation
 
-### Using Docker (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/resume-scorer.git
-cd resume-scorer
-
-# Build the Docker image
-docker build -t resume-scorer .
-
-# Run the Streamlit app
-docker run -p 8501:8501 resume-scorer streamlit
-
-# Or run the API server
-docker run -p 8000:8000 resume-scorer api
-```
-
 ### Local Installation
 
 ```bash
@@ -53,11 +36,45 @@ python -m spacy download en_core_web_sm
 # Run the Streamlit app
 cd src
 streamlit run app.py
-
-# Or run the API server
-cd src
-uvicorn api:app --reload
 ```
+
+## Deployment
+
+### API Deployment to Vercel
+
+The Resume Scorer API is ready for Vercel deployment with a consolidated API implementation in the `api/` directory. To deploy:
+
+1. **Ensure you have a Vercel account** - Sign up at [vercel.com](https://vercel.com) if needed
+
+2. **Install the Vercel CLI:**
+
+    ```bash
+    npm install -g vercel
+    ```
+
+3. **Deploy to Vercel:**
+
+    ```bash
+    vercel
+    ```
+
+4. **For production deployment:**
+    ```bash
+    vercel --prod
+    ```
+
+Alternatively, you can set up automatic deployments via GitHub:
+
+1. Push your code to GitHub
+2. Create a new project on Vercel and connect to your GitHub repository
+3. Configure settings for your deployment
+4. Deploy your project
+
+**Important Notes for Vercel Deployment:**
+
+-   The API uses the configuration in `vercel.json` which points to `api/index.py`
+-   The API provides public endpoints that don't require authentication
+-   The Vercel deployment is for the API only - the Streamlit UI must be run separately
 
 ## Usage
 
@@ -83,21 +100,29 @@ The Streamlit interface provides three main tabs:
 
 ### REST API
 
-The system also provides a REST API for integration with other systems:
+The system provides a REST API that can be accessed without authentication, matching the Streamlit interface functionality:
 
 ```bash
-# Authentication (get token)
-curl -X POST "http://localhost:8000/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=demo&password=password"
-
-# Analyze a resume
-curl -X POST "http://localhost:8000/analyze" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+# Analyze a resume (public endpoint)
+curl -X POST "https://your-api-url.vercel.app/analyze" \
   -F "resume=@path/to/resume.pdf" \
-  -F "job_details.summary=Job summary text" \
-  -F "job_details.skills=Required skills"
+  -F "job_summary=Job summary text" \
+  -F "key_duties=Key responsibilities" \
+  -F "essential_skills=Required skills" \
+  -F "qualifications=Required qualifications"
+
+# List all skills
+curl -X GET "https://your-api-url.vercel.app/skills"
+
+# Extract text and sections from a resume
+curl -X POST "https://your-api-url.vercel.app/debug/extract" \
+  -F "resume=@path/to/resume.pdf"
+
+# Health check
+curl -X GET "https://your-api-url.vercel.app/health"
 ```
+
+For more details on the API endpoints, request/response formats, and examples, see the [API_README.md](API_README.md) file.
 
 ## Key Features & Improvements
 
@@ -106,6 +131,7 @@ curl -X POST "http://localhost:8000/analyze" \
 -   **Upgraded Model**: Powerful `all-mpnet-base-v2` model with ONNX runtime quantization for faster inference
 -   **Parallel Processing**: Multi-core resume processing with joblib for batch analysis
 -   **Database-Backed Cache**: SQLite database for faster lookups of analysis results and embeddings
+-   **Consolidated API**: Unified API implementation for both public and authenticated access
 
 ### Accuracy & Analysis
 
@@ -119,12 +145,14 @@ curl -X POST "http://localhost:8000/analyze" \
 -   **Interactive Feedback**: Tailored resume improvement suggestions with alternative skills recommendations
 -   **Advanced Visualizations**: Radar charts for skills/experience/education, comparison charts, and keyword density clouds
 -   **Explainability**: Confidence scores, skill proficiency details, and salary estimations
+-   **Resume Section Extraction**: Automatic extraction of resume sections for structured analysis
 
 ### Integration & Deployment
 
--   **Comprehensive REST API**: FastAPI with JWT authentication, user roles, and rate limiting
+-   **Public API Endpoints**: Accessible without authentication, matching Streamlit functionality
+-   **Vercel-Ready**: Optimized for serverless deployment on Vercel
 -   **Multi-Language Support**: Detection and translation for non-English resumes
--   **Flexible Deployment**: Docker containerization with support for AWS, GCP, and serverless options
+-   **Comprehensive Error Handling**: Robust error handling and logging for production use
 
 ### Additional Capabilities
 
@@ -136,15 +164,20 @@ curl -X POST "http://localhost:8000/analyze" \
 
 -   `src/` - Main source code
     -   `app.py` - Streamlit web interface
-    -   `api.py` - FastAPI REST API
+    -   `app_local.py` - Offline Streamlit interface
+    -   `api.py` - Legacy FastAPI REST API with authentication
     -   `utils/` - Core functionality
         -   `analyzer.py` - Resume analysis logic
         -   `pdf_extractor.py` - PDF text extraction
         -   `skill_ontology.py` - Skill normalization and detection
         -   `visualizations.py` - Chart and visualization generation
--   `model_cache/` - Cached models and embeddings
+-   `api/` - Vercel deployment API
+    -   `index.py` - Main API entry point (public endpoints)
+    -   `requirements.txt` - API-specific dependencies
 -   `requirements.txt` - Python dependencies
--   `Dockerfile` - Docker containerization
+-   `requirements-vercel.txt` - Optimized dependencies for Vercel
+-   `vercel.json` - Vercel configuration
+-   `API_README.md` - Detailed API documentation
 
 ## Technical Implementation Details
 
@@ -166,8 +199,9 @@ curl -X POST "http://localhost:8000/analyze" \
 
 ### Deployment Infrastructure
 
--   **Run Scripts**: Easy running in different modes (API, UI)
--   **Deploy Scripts**: Streamlined deployment scripts for cloud environments
+-   **Vercel Configuration**: Easy deployment to Vercel's serverless platform
+-   **API Entry Point**: Clean separation of concerns for API deployment
+-   **Environment Management**: Secure handling of API keys and secrets
 -   **Code Quality**: Modular architecture with clean interfaces between components
 
 ## Running Tests

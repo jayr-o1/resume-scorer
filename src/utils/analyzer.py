@@ -716,41 +716,55 @@ def estimate_total_experience(durations: List[Dict[str, str]]) -> int:
     # Convert to years, rounded
     return round(total_months / 12)
 
-def analyze_resume(resume_text, job_details):
+def analyze_resume(extraction_result, job_details):
     """
-    Analyze resume against job details using a local model with enhanced capabilities
+    Main function to analyze a resume against job requirements
     
     Parameters:
-    - resume_text: Extracted text from the resume
-    - job_details: Dictionary containing job summary, duties, skills, etc.
+    - extraction_result: Result from extract_text_from_pdf
+    - job_details: Dictionary with job details
     
     Returns:
     - Dictionary with analysis results
     """
     try:
-        # Check if resume_text is a dict from the enhanced extractor
-        if isinstance(resume_text, dict) and "text" in resume_text:
-            # Get language info
-            language = resume_text.get("language", "en")
-            extraction_method = resume_text.get("extraction_method", "")
-            
-            # Use the actual text for analysis
-            resume_text = resume_text["text"]
-            
-            if not resume_text:
-                return {
-                    "error": "No text could be extracted from the resume",
-                    "match_percentage": "0",
-                    "recommendation": "Error during analysis"
-                }
+        # Handle case where extraction_result is the text directly
+        if isinstance(extraction_result, str):
+            resume_text = extraction_result
+            extraction_result = {"text": resume_text, "language": "en", "extraction_method": "direct"}
         
-        # Extract job requirements
-        job_text = " ".join([
-            job_details.get('summary', ''),
-            job_details.get('duties', ''),
-            job_details.get('skills', ''),
-            job_details.get('qualifications', '')
-        ])
+        # Check if we have valid text
+        if not extraction_result or not extraction_result.get("text"):
+            return {
+                "error": "Could not extract text from resume",
+                "match_percentage": "0%",
+                "recommendation": "Please provide a valid PDF resume",
+                "skills_match": {},
+                "experience": {},
+                "education": {},
+                "certifications": {},
+                "keywords": {},
+                "industry": {}
+            }
+        
+        resume_text = extraction_result["text"]
+        
+        # Handle non-string text (e.g., None)
+        if resume_text is None:
+            resume_text = ""
+            
+        # Ensure resume_text is a string
+        if not isinstance(resume_text, str):
+            resume_text = str(resume_text)
+        
+        # Extract job requirements - filter out None values
+        job_text_parts = [
+            job_details.get('summary', '') or '',
+            job_details.get('duties', '') or '',
+            job_details.get('skills', '') or '',
+            job_details.get('qualifications', '') or ''
+        ]
+        job_text = " ".join(job_text_parts)
         
         # Generate hash for caching
         combined = (resume_text + job_text).encode('utf-8')
@@ -777,9 +791,13 @@ def analyze_resume(resume_text, job_details):
         model = get_model()
         
         # Extract skills from job description
-        skills_text = job_details.get('skills', '')
-        skills_list = [s.strip().lower() for s in re.findall(r'[-•]?\s*([\w\s\+\#\.\-]+)(?:,|\n|$)', skills_text)]
+        skills_text = job_details.get('skills', '') or ''
+        skills_list = [s.strip().lower() for s in re.findall(r'[-•]?\s*([\w\s\+\#\.\-]+)(?:,|\n|$)', skills_text) if s]
         skills_list = [s for s in skills_list if len(s) > 2]  # Filter out very short items
+        
+        # Ensure we have at least some skills to match against
+        if not skills_list:
+            skills_list = ["general skills"]
         
         # Use NER to enhance skills extraction
         entities = extract_entities_with_ner(resume_text)
@@ -790,7 +808,8 @@ def analyze_resume(resume_text, job_details):
         skill_results = skill_ontology.detect_skills(resume_text)
         
         # Normalize required skills
-        normalized_required_skills = [skill_ontology.normalize_skill(s) for s in skills_list]
+        normalized_required_skills = [skill_ontology.normalize_skill(s) for s in skills_list if s]
+        normalized_required_skills = [s for s in normalized_required_skills if s]  # Filter out None values
         
         # Extract job titles and employment durations
         job_titles = extract_job_titles(resume_text)
@@ -811,14 +830,17 @@ def analyze_resume(resume_text, job_details):
         skill_details = []
         
         # First use the skill ontology results
-        resume_skill_names = {skill["normalized_name"] for skill in skill_results}
+        resume_skill_names = {skill["normalized_name"] for skill in skill_results if skill.get("normalized_name")}
         
         for skill in normalized_required_skills:
+            if not skill:  # Skip None or empty skills
+                continue
+                
             if skill in resume_skill_names:
                 matched_skills.append(skill)
                 # Find the corresponding skill detail
                 for skill_detail in skill_results:
-                    if skill_detail["normalized_name"] == skill:
+                    if skill_detail.get("normalized_name") == skill:
                         skill_details.append(skill_detail)
                         break
             else:
@@ -840,15 +862,12 @@ def analyze_resume(resume_text, job_details):
         alternative_skills = missing_skills_results.get("alternative_skills", {})
         
         # Add NER-discovered skills that weren't in the job posting
-        additional_skills = [skill for skill in ner_skills if skill not in matched_skills and skill not in missing_skills]
+        additional_skills = [skill for skill in ner_skills if skill and skill not in matched_skills and skill not in missing_skills]
         
-        # Add ontology skills not already included
-        ontology_skill_names = {skill["name"] for skill in skill_results}
-        additional_ontology_skills = [
-            skill for skill in ontology_skill_names 
-            if skill not in matched_skills and skill not in missing_skills and skill not in additional_skills
-        ]
-        additional_skills.extend(additional_ontology_skills)
+        # Filter out None values in all skill lists
+        matched_skills = [s for s in matched_skills if s]
+        missing_skills = [s for s in missing_skills if s]
+        additional_skills = [s for s in additional_skills if s]
         
         # Calculate match ratio
         total_skills = len(normalized_required_skills)
@@ -1147,23 +1166,25 @@ def format_analysis_result(analysis):
 
 def batch_process_resumes(resume_files, job_details, n_jobs=-1):
     """
-    Process multiple resume files in parallel
+    Process multiple resumes in parallel
     
     Parameters:
-    - resume_files: List of paths to resume PDF files
-    - job_details: Dictionary with job details
-    - n_jobs: Number of parallel jobs (-1 means using all processors)
+    - resume_files: List of paths to resume PDFs
+    - job_details: Dictionary of job details
+    - n_jobs: Number of parallel jobs (default: use all cores)
     
     Returns:
     - Dictionary mapping filenames to analysis results
     """
+    from joblib import Parallel, delayed
+    import os
     from utils.pdf_extractor import extract_text_from_pdf
     
     def process_single_resume(resume_file):
         filename = os.path.basename(resume_file)
-        resume_text = extract_text_from_pdf(resume_file)
-        if resume_text:
-            return filename, analyze_resume(resume_text, job_details)
+        extraction_result = extract_text_from_pdf(resume_file)
+        if extraction_result and extraction_result.get("text"):
+            return filename, analyze_resume(extraction_result, job_details)
         return filename, {"error": "Failed to extract text from PDF"}
     
     # Use joblib for parallel processing
