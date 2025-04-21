@@ -70,7 +70,7 @@ fi
 echo "Installing dependencies with memory optimization..."
 # Use requirements-render.txt first, fall back to requirements.txt
 if [ -f requirements-render.txt ]; then
-    # Remove problematic onnxruntime-cpu from requirements
+    # Remove problematic onnxruntime and torch from requirements
     grep -v "onnxruntime\|torch" requirements-render.txt > requirements-render-modified.txt
     pip install --no-cache-dir -r requirements-render-modified.txt --no-deps || {
         echo "Failed to install all dependencies at once, trying one by one..."
@@ -86,7 +86,7 @@ if [ -f requirements-render.txt ]; then
         done < packages.txt
     }
 else
-    # Remove problematic onnxruntime from requirements
+    # Remove problematic onnxruntime and torch from requirements
     grep -v "onnxruntime\|torch" requirements.txt > requirements-modified.txt
     pip install --no-cache-dir -r requirements-modified.txt --no-deps || {
         echo "Failed to install dependencies, trying essential packages only..."
@@ -103,46 +103,63 @@ echo "Installing CPU-specific acceleration libraries..."
 pip install --no-cache-dir accelerate==0.25.0 --no-deps
 pip install --no-cache-dir bitsandbytes-cpu || pip install --no-cache-dir bitsandbytes==0.41.1
 
-# Create special wrapper to avoid CUDA imports
-echo "Creating PyTorch CUDA import wrapper..."
-cat > /tmp/cuda_wrapper.py << EOL
-import sys
+# Create simple CUDA patch file
+echo "Creating CUDA patch file..."
+cat > cuda_patch.py << EOL
+#!/usr/bin/env python3
+"""
+Simple patch to disable CUDA functionality in PyTorch
+"""
 import os
+import sys
 
-# Set environment variables that disable CUDA
+# Set environment variables to disable CUDA
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["FORCE_CPU"] = "1"
 os.environ["NO_CUDA"] = "1"
 
-# Create fake CUDA module to prevent import errors
+# Create a fake CUDA module
 class FakeCUDA:
-    class cudart:
-        def cudaGetDevice(*args, **kwargs):
-            raise RuntimeError("CUDA is disabled")
-    
-    def is_available(*args, **kwargs):
+    @staticmethod
+    def is_available():
         return False
     
-    def device_count(*args, **kwargs):
+    @staticmethod
+    def device_count():
         return 0
+    
+    @staticmethod
+    def current_device():
+        raise RuntimeError("CUDA not available")
+    
+    @staticmethod
+    def get_device_name(device=None):
+        return "CPU"
 
-# Install the fake CUDA module
+# Patch sys.modules directly
 sys.modules["torch.cuda"] = FakeCUDA()
 
-# Patch torch to disable CUDA
-try:
-    import torch
+# Patch torch if already imported
+if "torch" in sys.modules:
+    torch = sys.modules["torch"]
     torch.cuda.is_available = lambda: False
     torch.cuda.device_count = lambda: 0
-    torch._C._cuda_isDriverSufficient = lambda: False
-    # Add any other CUDA functions that need to be stubbed
-except ImportError:
-    pass
+
+# Test the patch
+if __name__ == "__main__":
+    # Try importing torch to verify patch works
+    try:
+        import torch
+        print(f"PyTorch CUDA available: {torch.cuda.is_available()}")
+        assert not torch.cuda.is_available(), "CUDA should be disabled"
+        print("CUDA patch successful")
+    except ImportError:
+        print("PyTorch not installed")
+    except Exception as e:
+        print(f"Error testing CUDA patch: {e}")
 EOL
 
-# Install the wrapper as a startup script
-mkdir -p $VIRTUAL_ENV/lib/python3.10/site-packages/sitecustomize/
-cp /tmp/cuda_wrapper.py $VIRTUAL_ENV/lib/python3.10/site-packages/sitecustomize/__init__.py
+chmod +x cuda_patch.py
 
 # Cleanup pip cache to save space
 rm -rf ~/.cache/pip
@@ -169,75 +186,6 @@ fi
 if [ ! -f local_api/__init__.py ]; then
   touch local_api/__init__.py
 fi
-
-# Create a minimal API implementation for render_api
-echo "Creating minimal render API implementation..."
-cat > render_api/app.py << EOL
-"""
-Minimal version of render API that avoids CUDA dependencies
-"""
-import os
-# Force CPU mode before any torch imports
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
-os.environ["FORCE_CPU"] = "1"
-os.environ["NO_CUDA"] = "1"
-os.environ["SKIP_ONNX"] = "1"
-
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import logging
-
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Create FastAPI app
-app = FastAPI(title="Resume Scorer API", 
-             description="API for analyzing resumes in PDF format",
-             version="1.0.0")
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "mode": "CPU-only"}
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {"message": "Resume Scorer API is running in CPU-only mode"}
-
-# Import the full API implementation only if needed
-try:
-    # Try to import the analyzer module
-    from api.index import app as full_app
-    
-    # Copy all routes from the full app
-    for route in full_app.routes:
-        if route.path not in ["/health", "/"]:
-            app.routes.append(route)
-            
-    logger.info("Successfully imported full API implementation")
-except Exception as e:
-    logger.error(f"Error importing full API: {e}")
-    logger.info("Running with minimal API implementation")
-    
-    @app.post("/analyze")
-    async def analyze_fallback(file: UploadFile = File(...)):
-        """Fallback analyze endpoint"""
-        return {
-            "error": "Full API implementation could not be loaded",
-            "message": "The system is currently running in minimal mode due to initialization errors."
-        }
-EOL
 
 # Print current Python packages
 echo "Installed Python packages:"
@@ -283,7 +231,27 @@ except Exception as e:
     print(f'Error downloading model: {e}')
 " || echo "Warning: Failed to download sentence transformer model"
 
-# Skip trying to run task specific and quantized model downloads if the main model failed
+# Create simple startup script
+echo "Creating startup script..."
+cat > startup.sh << EOL
+#!/bin/bash
+# Startup script that ensures CUDA is disabled
+
+# Set environment variables to disable CUDA
+export CUDA_VISIBLE_DEVICES=""
+export FORCE_CPU=1
+export NO_CUDA=1
+
+# Apply CUDA patch
+python -m cuda_patch
+
+# Run the API server
+python run_api.py --port=\${PORT:-8080} --host=0.0.0.0 --workers=1 --use-render --fallback-to-cpu --skip-onnx
+EOL
+
+chmod +x startup.sh
+
+# Set environment variables for offline use
 echo "Setting environment variables for offline use..."
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1

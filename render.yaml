@@ -5,7 +5,7 @@ services:
       env: python
       region: singapore
       plan: free
-      buildCommand: "./render-build.sh && chmod +x startup.sh && chmod +x cuda_patch.py"
+      buildCommand: "./render-build.sh"
       startCommand: "./startup.sh"
       envVars:
           - key: PYTHON_VERSION
@@ -16,71 +16,30 @@ services:
             value: production
           - key: RENDER
             value: true
-          - key: TRANSFORMERS_OFFLINE
-            value: 1
-          - key: HF_DATASETS_OFFLINE
-            value: 1
           - key: PYTHONUNBUFFERED
             value: true
-          # Optimized import configuration
-          - key: PYTHONSTARTUP
-            value: cuda_patch.py
-          # Completely disable CUDA
+          # Disable CUDA completely
           - key: CUDA_VISIBLE_DEVICES
             value: ""
           - key: FORCE_CPU
             value: 1
           - key: NO_CUDA
             value: 1
-          - key: DISABLE_CUDA
-            value: 1
-          # Optimize Python memory usage
+          # Optimize memory usage
           - key: PYTHONMALLOC
             value: malloc
           - key: MALLOC_TRIM_THRESHOLD_
             value: 65536
-          # Disable JIT compilation to save memory
           - key: PYTORCH_JIT
             value: 0
-          # Keep memory footprint small
+          # Workers and threads
           - key: OMP_NUM_THREADS
             value: 1
           - key: MKL_NUM_THREADS
             value: 1
-          # Optimize garbage collection
-          - key: PYTHONGC
-            value: threshold-aggressive
-          # Increase memory reclamation
-          - key: TORCH_EXTENSIONS_CACHE
-            value: /tmp/torch_extensions
-          # Enable model optimizations
-          - key: USE_QUANTIZED_MODEL
-            value: 1
-          - key: USE_TASK_SPECIFIC_MODELS
-            value: 1
-          - key: OPTIMIZE_MEMORY
-            value: 1
-          - key: MEMORY_CONSTRAINED
-            value: 1
-          - key: MODEL_WARMUP_ON_START
-            value: true
-          - key: ENABLE_DYNAMIC_RESOURCE_MANAGEMENT
-            value: true
           # Skip problematic dependencies
           - key: SKIP_ONNX
             value: 1
-          # Retry settings for model loading
-          - key: MODEL_LOAD_RETRIES
-            value: 5
-          # Tokenizer settings to reduce memory usage
-          - key: TOKENIZERS_PARALLELISM
-            value: false
-          # Safe mode
-          - key: SAFE_MODE
-            value: 1
-          # PyTorch specific optimizations
-          - key: PYTORCH_CUDA_ALLOC_CONF
-            value: max_split_size_mb:32
       healthCheckPath: /health
 
 # A Redis instance for job queuing (optional, use if you need background processing)
