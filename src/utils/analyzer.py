@@ -297,8 +297,13 @@ def check_skill_match(resume_text, skill):
     if skill in resume_text:
         return True
     
+    # Check for skill as a standalone word
+    if re.search(r'\b' + re.escape(skill) + r'\b', resume_text):
+        return True
+    
     # Common variants for specific technologies
     skill_variants = {
+        # Tech skills
         'react': ['reactjs', 'react.js'],
         'node.js': ['nodejs', 'node'],
         'express.js': ['expressjs', 'express'],
@@ -313,7 +318,28 @@ def check_skill_match(resume_text, skill):
         'unit testing': ['jest', 'mocha', 'testing', 'test driven'],
         'aws': ['amazon web services', 'ec2', 's3', 'lambda'],
         'azure': ['microsoft azure', 'azure cloud'],
-        'gcp': ['google cloud platform', 'google cloud']
+        'gcp': ['google cloud platform', 'google cloud'],
+        
+        # Marketing skills
+        'marketing': ['digital marketing', 'marketers', 'market', 'marketing strategy'],
+        'social media marketing': ['social media', 'social marketing', 'facebook marketing', 'instagram marketing'],
+        'content marketing': ['content creation', 'content strategy', 'content writing', 'blog'],
+        'email marketing': ['email campaigns', 'email newsletters', 'email strategy', 'mailchimp'],
+        'seo': ['search engine optimization', 'search optimization', 'google search', 'keywords'],
+        'sem': ['search engine marketing', 'ppc', 'pay per click', 'google ads', 'paid search'],
+        'analytics': ['google analytics', 'data analysis', 'metrics', 'reporting', 'insights'],
+        'campaign management': ['campaign', 'marketing campaign', 'campaign strategy', 'campaign execution'],
+        'brand management': ['branding', 'brand strategy', 'brand development', 'brand identity'],
+        'market research': ['research', 'competitor analysis', 'market analysis', 'consumer research'],
+        
+        # Business skills
+        'project management': ['project planning', 'project coordination', 'project delivery', 'project lead'],
+        'team management': ['team leadership', 'team lead', 'people management', 'managing teams'],
+        'leadership': ['leading', 'team lead', 'leadership skills', 'people management'],
+        'strategy': ['strategic', 'strategy development', 'strategic planning', 'strategic thinking'],
+        'budget management': ['budgeting', 'financial planning', 'expense management', 'budget allocation'],
+        'communication': ['written communication', 'verbal communication', 'presentation', 'public speaking'],
+        'analysis': ['analytical', 'data analysis', 'market analysis', 'performance analysis']
     }
     
     # Check for variants
@@ -326,7 +352,34 @@ def check_skill_match(resume_text, skill):
             for variant in variants:
                 if variant in resume_text:
                     return True
-                    
+    
+    # Check for partial matches for longer skill phrases
+    if len(skill) > 10:  # Only for longer skill phrases
+        skill_parts = skill.split()
+        if len(skill_parts) > 1:
+            # If most parts of a multi-word skill are found
+            matches = sum(1 for part in skill_parts if part in resume_text and len(part) > 3)
+            if matches >= max(2, len(skill_parts) - 1):
+                return True
+    
+    # Special case for common skills that might be described differently
+    common_skills_keywords = {
+        'communication': ['communicate', 'interpersonal', 'presentation', 'speaking', 'writing'],
+        'leadership': ['lead', 'leading', 'leader', 'managed team', 'supervised'],
+        'analytical': ['analysis', 'analyze', 'data-driven', 'research', 'problem solving'],
+        'creativity': ['creative', 'innovative', 'design thinking', 'new ideas'],
+        'customer service': ['client', 'customer support', 'customer satisfaction', 'customer experience'],
+        'marketing': ['promoted', 'advertised', 'marketed', 'campaign', 'brand', 'promotion'],
+        'sales': ['selling', 'sales strategy', 'customer acquisition', 'business development', 'revenue'],
+        'research': ['researched', 'analyzed', 'investigation', 'study', 'data collection']
+    }
+    
+    for base_skill, keywords in common_skills_keywords.items():
+        if skill == base_skill:
+            for keyword in keywords:
+                if keyword in resume_text:
+                    return True
+    
     return False
 
 def get_cache_path(resume_text: str, job_text: str) -> Path:
@@ -413,169 +466,105 @@ def get_model():
     """
     global _model_cache
     
+    # Return cached model if available
     if _model_cache is not None:
         return _model_cache
+    
+    # Define simple fallback model class
+    class SimpleFallbackModel:
+        """Simple model that generates embeddings based on word frequencies"""
+        def __init__(self):
+            self.dimension = 384  # Similar to MiniLM-L6
+        
+        def encode(self, sentences, **kwargs):
+            import numpy as np
+            from collections import Counter
+            import re
+            
+            if isinstance(sentences, str):
+                sentences = [sentences]
+            
+            embeddings = []
+            for sentence in sentences:
+                # Simple tokenization
+                words = re.findall(r'\b\w+\b', sentence.lower())
+                if not words:
+                    embeddings.append(np.zeros(self.dimension))
+                    continue
+                    
+                # Count words
+                counter = Counter(words)
+                
+                # Generate a simple embedding
+                embedding = np.zeros(self.dimension)
+                for i, (word, count) in enumerate(counter.most_common(min(self.dimension, len(counter)))):
+                    # Hash the word to a value
+                    word_val = sum(ord(c) for c in word) / 255.0
+                    embedding[i % self.dimension] = word_val * count / len(words)
+                
+                # Normalize
+                norm = np.linalg.norm(embedding)
+                if norm > 0:
+                    embedding = embedding / norm
+                
+                embeddings.append(embedding)
+            
+            return np.array(embeddings)
+    
+    # Even simpler fallback model as a last resort
+    class UltraSimpleFallbackModel:
+        """Ultra-simple model that just returns zeros"""
+        def __init__(self):
+            self.dimension = 384
+        
+        def encode(self, sentences, **kwargs):
+            import numpy as np
+            if isinstance(sentences, str):
+                sentences = [sentences]
+            return np.zeros((len(sentences), self.dimension))
     
     # Check if we're in offline mode
     offline_mode = os.environ.get("TRANSFORMERS_OFFLINE", "0") == "1"
     on_render = "RENDER" in os.environ
-    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "model_cache", "sentence_transformers")
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                             "model_cache", "sentence_transformers")
     
-    try:
-        # First attempt - try to load from the cache directory
-        logger.info(f"Attempting to load model from cache: {cache_dir}")
-        model = SentenceTransformer(MODEL_NAME, cache_folder=cache_dir)
-        _model_cache = model
-        logger.info("Successfully loaded model from cache")
-        return model
-    except Exception as e:
-        if offline_mode or on_render:
-            logger.error(f"Error loading model in offline mode: {e}")
-            
-            # Fallback for Render: Use a direct path to the cached model if it exists
-            model_dir = os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))
-            if os.path.exists(model_dir):
-                try:
-                    logger.info(f"Attempting to load model from specific path: {model_dir}")
-                    from sentence_transformers import SentenceTransformer
-                    model = SentenceTransformer(model_dir)
-                    _model_cache = model
-                    logger.info("Successfully loaded model from direct path")
-                    return model
-                except Exception as inner_e:
-                    logger.error(f"Failed to load model from direct path: {inner_e}")
-            
-            # Return a simple fallback for handling text
-            logger.warning("Using simple fallback for text processing")
-            from sentence_transformers import SentenceTransformer
-            
-            # Create a very simple model that returns basic embeddings
-            class SimpleFallbackModel:
-                def __init__(self):
-                    self.dimension = 384  # Similar to MiniLM-L6
-                
-                def encode(self, sentences, **kwargs):
-                    """Generate simple embeddings based on word frequencies"""
-                    import numpy as np
-                    from collections import Counter
-                    import re
-                    
-                    if isinstance(sentences, str):
-                        sentences = [sentences]
-                    
-                    embeddings = []
-                    for sentence in sentences:
-                        # Simple tokenization
-                        words = re.findall(r'\b\w+\b', sentence.lower())
-                        if not words:
-                            embeddings.append(np.zeros(self.dimension))
-                            continue
-                            
-                        # Count words
-                        counter = Counter(words)
-                        
-                        # Generate a simple embedding
-                        embedding = np.zeros(self.dimension)
-                        for i, (word, count) in enumerate(counter.most_common(min(self.dimension, len(counter)))):
-                            # Hash the word to a value
-                            word_val = sum(ord(c) for c in word) / 255.0
-                            embedding[i % self.dimension] = word_val * count / len(words)
-                        
-                        # Normalize
-                        norm = np.linalg.norm(embedding)
-                        if norm > 0:
-                            embedding = embedding / norm
-                        
-                        embeddings.append(embedding)
-                    
-                    return np.array(embeddings)
-            
-            _model_cache = SimpleFallbackModel()
-            return _model_cache
-        else:
-            # If not in offline mode, try again with regular loading
-            try:
-                logger.info("Attempting to load model from HuggingFace Hub")
-                model = SentenceTransformer(MODEL_NAME)
+    # Try different approaches to load the model
+    approaches = [
+        # 1. Try loading from cache directory
+        lambda: SentenceTransformer(MODEL_NAME, cache_folder=cache_dir),
+        
+        # 2. Try loading from specific path for Render
+        lambda: SentenceTransformer(os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))) 
+                if os.path.exists(os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))) else None,
+        
+        # 3. Try loading directly from HuggingFace (if not in offline mode)
+        lambda: SentenceTransformer(MODEL_NAME) if not offline_mode and not on_render else None,
+        
+        # 4. Use SimpleFallbackModel
+        lambda: SimpleFallbackModel(),
+        
+        # 5. Final fallback: UltraSimpleFallbackModel
+        lambda: UltraSimpleFallbackModel()
+    ]
+    
+    # Try each approach in order
+    for i, approach in enumerate(approaches):
+        try:
+            model = approach()
+            if model is not None:
+                logger.info(f"Successfully loaded model using approach {i+1}")
                 _model_cache = model
                 return model
-            except Exception as load_e:
-                logger.error(f"Error loading model from HuggingFace Hub: {load_e}")
-                # Always ensure we set a fallback model if everything else fails
-                logger.warning("Using emergency fallback for text processing")
-                _model_cache = SimpleFallbackModel()  # Re-use the simple fallback model
-                return _model_cache
-    except Exception as e:
-        logger.error(f"Error setting up optimized model: {e}")
-        logger.info(f"Falling back to standard model: {MODEL_NAME}")
-        try:
-            model = SentenceTransformer(MODEL_NAME)
-            _model_cache = model
-            return model
-        except Exception as final_e:
-            logger.error(f"Final error loading model: {final_e}")
-            # Ensure we always have a fallback
-            logger.warning("Using emergency fallback after all attempts failed")
-            
-            # Create a SimpleFallbackModel instance if it hasn't been defined yet
-            try:
-                if 'SimpleFallbackModel' not in locals():
-                    class SimpleFallbackModel:
-                        def __init__(self):
-                            self.dimension = 384  # Similar to MiniLM-L6
-                        
-                        def encode(self, sentences, **kwargs):
-                            """Generate simple embeddings based on word frequencies"""
-                            import numpy as np
-                            from collections import Counter
-                            import re
-                            
-                            if isinstance(sentences, str):
-                                sentences = [sentences]
-                            
-                            embeddings = []
-                            for sentence in sentences:
-                                # Simple tokenization
-                                words = re.findall(r'\b\w+\b', sentence.lower())
-                                if not words:
-                                    embeddings.append(np.zeros(self.dimension))
-                                    continue
-                                    
-                                # Count words
-                                counter = Counter(words)
-                                
-                                # Generate a simple embedding
-                                embedding = np.zeros(self.dimension)
-                                for i, (word, count) in enumerate(counter.most_common(min(self.dimension, len(counter)))):
-                                    # Hash the word to a value
-                                    word_val = sum(ord(c) for c in word) / 255.0
-                                    embedding[i % self.dimension] = word_val * count / len(words)
-                                
-                                # Normalize
-                                norm = np.linalg.norm(embedding)
-                                if norm > 0:
-                                    embedding = embedding / norm
-                                
-                                embeddings.append(embedding)
-                            
-                            return np.array(embeddings)
-                
-                _model_cache = SimpleFallbackModel()
-                return _model_cache
-            except Exception as final_final_e:
-                logger.error(f"Error creating fallback model: {final_final_e}")
-                # Last resort - create an extremely simple model that just returns zeros
-                class UltraSimpleFallbackModel:
-                    def __init__(self):
-                        self.dimension = 384
-                    
-                    def encode(self, sentences, **kwargs):
-                        if isinstance(sentences, str):
-                            sentences = [sentences]
-                        return np.zeros((len(sentences), self.dimension))
-                
-                _model_cache = UltraSimpleFallbackModel()
-                return _model_cache
+        except Exception as e:
+            logger.warning(f"Approach {i+1} failed: {str(e)}")
+            continue
+    
+    # If all approaches fail (should never happen due to fallbacks)
+    logger.error("All model loading approaches failed")
+    model = UltraSimpleFallbackModel()
+    _model_cache = model
+    return model
 
 def get_embedding(text: str, model=None):
     """
@@ -858,18 +847,30 @@ def analyze_resume(extraction_result, job_details):
     try:
         # First check for cached result
         resume_text = extraction_result.get("text", "")
-        job_text = job_details.get("job_description", "")
+        
+        # For compatibility with different API versions
+        if "job_description" in job_details:
+            job_text = job_details.get("job_description", "")
+        else:
+            # Combine different job detail fields into a single text
+            job_text = " ".join([
+                job_details.get("summary", ""),
+                job_details.get("duties", ""),
+                job_details.get("skills", ""),
+                job_details.get("qualifications", "")
+            ])
         
         if not resume_text:
             return {
                 "error": "Resume text is empty",
-                "match_percentage": 0,
+                "match_percentage": "0%",
                 "recommendation": "Cannot process empty resume",
                 "skills_match": {"matched_skills": [], "matched_count": 0, "required_count": 0, "match_ratio": "0/0", "match_percentage": 0, "additional_skills": []},
                 "experience": {"required_years": 0, "applicant_years": 0, "meets_requirement": False, "percentage_impact": "+0%"},
                 "education": {"required_education": "Not specified", "applicant_education": "Not specified", "assessment": "No impact"},
                 "certifications": {"relevant_certs": [], "percentage_impact": "+0%"},
-                "keywords": {"match_ratio": "0/0", "match_percentage": 0}
+                "keywords": {"match_ratio": "0/0", "match_percentage": 0},
+                "industry": {"detected": "unknown", "confidence": 0}
             }
         
         # Try to load from cache
@@ -907,77 +908,130 @@ def analyze_resume(extraction_result, job_details):
         
         logger.info("Starting resume analysis")
         
-        # Extract job requirements
+        # Extract job details for analysis
         job_title = job_details.get("job_title", "").strip()
-        job_description = job_details.get("job_description", "").strip()
-        required_skills = job_details.get("required_skills", [])
-        required_experience = job_details.get("required_experience", 0)
-        required_education = job_details.get("required_education", "Not specified")
+        job_description = job_text.strip()
         
-        # Process the resume
+        # Process required years of experience (simple fallback)
+        required_experience = 0
         try:
-            job_tokens = len(job_description.split())
-            resume_tokens = len(resume_text.split())
-            logger.info(f"Resume: {resume_tokens} tokens | Job description: {job_tokens} tokens")
-            
-            # To prevent memory issues with very large documents
-            resume_text_trimmed = " ".join(resume_text.split()[:25000])
-            job_description_trimmed = " ".join(job_description.split()[:5000])
-            
-            # Generate embeddings safely with error handling
-            try:
-                resume_embedding = get_embedding(resume_text_trimmed, model)
-                job_embedding = get_embedding(job_description_trimmed, model)
-                
-                # Verify embeddings are valid
-                if resume_embedding is None or job_embedding is None:
-                    logger.error("One or both embeddings are None")
-                    raise ValueError("Failed to generate embeddings")
-                
-                # Calculate similarity
-                similarity = np.dot(resume_embedding, job_embedding)
-                base_match_percentage = int(similarity * 100)
-            except Exception as embed_error:
-                logger.error(f"Error generating embeddings: {embed_error}")
-                # Fall back to a basic keyword matching approach
-                common_words = set(normalize_text(resume_text_trimmed).split()) & set(normalize_text(job_description_trimmed).split())
-                all_words = set(normalize_text(job_description_trimmed).split())
-                if all_words:
-                    base_match_percentage = int((len(common_words) / len(all_words)) * 60)  # Max 60% match with fallback
-                else:
-                    base_match_percentage = 30  # Default fallback
+            required_experience = extract_years_from_text(job_description)
         except Exception as e:
-            logger.error(f"Error in document processing: {e}")
-            return get_fallback_response(resume_text, job_details, str(e))
+            logger.warning(f"Error extracting required experience: {e}")
+            
+        # Process required education level (simple fallback)
+        required_education = "Not specified"
+        try:
+            education_keywords = ["degree", "bachelor", "master", "phd", "doctorate", "diploma", "certificate"]
+            for sentence in job_description.split("."):
+                if any(keyword in sentence.lower() for keyword in education_keywords):
+                    required_education = sentence.strip()
+                    break
+        except Exception as e:
+            logger.warning(f"Error extracting required education: {e}")
         
-        # Analyze required skills
-        if not required_skills and job_description:
-            # If no skills provided, try extracting them
-            entities = extract_entities_with_ner(job_description)
-            if entities and "SKILLS" in entities:
-                required_skills = entities["SKILLS"]
+        # Extract required skills
+        required_skills = []
+        
+        # First, try to use explicitly provided skills
+        if "required_skills" in job_details and job_details["required_skills"]:
+            required_skills = job_details["required_skills"]
+        elif "skills" in job_details and job_details["skills"]:
+            # Try to extract skills from the skills field
+            skills_text = job_details["skills"]
+            if isinstance(skills_text, str):
+                if "," in skills_text:
+                    # Comma-separated list
+                    required_skills = [s.strip() for s in skills_text.split(",") if s.strip()]
+                elif "-" in skills_text or "•" in skills_text:
+                    # Bullet points or dashes
+                    required_skills = [s.strip().lstrip("-•").strip() for s in skills_text.split("\n") if s.strip()]
+                else:
+                    # Try to extract as a single skill or use NER
+                    try:
+                        entities = extract_entities_with_ner(skills_text)
+                        if entities and "SKILLS" in entities:
+                            required_skills = entities["SKILLS"]
+                        else:
+                            required_skills = [skills_text]
+                    except Exception:
+                        required_skills = [skills_text]
+        
+        # If still no required skills, try to extract from job description
+        if not required_skills:
+            try:
+                entities = extract_entities_with_ner(job_description)
+                if entities and "SKILLS" in entities:
+                    required_skills = entities["SKILLS"]
+            except Exception as e:
+                logger.warning(f"Error extracting skills with NER: {e}")
+                # Fallback: use common skill keywords
+                common_skills = ["python", "javascript", "java", "c++", "react", "node.js", "html", "css", 
+                                "sql", "machine learning", "data analysis", "marketing", "sales", "communication",
+                                "leadership", "project management", "design", "research"]
+                for skill in common_skills:
+                    if skill.lower() in job_description.lower():
+                        required_skills.append(skill)
         
         # Match skills in resume
         matched_skills = []
         additional_skills = []
         
+        # Get resume sections to improve skill matching
+        resume_sections = extraction_result.get("sections", {})
+        if not resume_sections:
+            try:
+                resume_sections = extract_resume_sections(resume_text)
+            except Exception as e:
+                logger.warning(f"Error extracting resume sections: {e}")
+                resume_sections = {}
+        
+        # Specially focus on the skills section if available
+        skills_section_text = ""
+        if resume_sections and "skills" in resume_sections:
+            skills_section_text = resume_sections["skills"]
+        
         # First detect skills in the resume
         try:
-            resume_entities = extract_entities_with_ner(resume_text)
-            if resume_entities and "SKILLS" in resume_entities:
-                detected_skills = resume_entities["SKILLS"]
-                logger.info(f"Detected {len(detected_skills)} skills in resume")
-            else:
-                detected_skills = []
-                
+            # Try to extract skills from dedicated skills section first
+            detected_skills = []
+            
+            if skills_section_text:
+                # Use the new specialized function
+                skills_from_section = extract_skills_from_section(skills_section_text)
+                if skills_from_section:
+                    detected_skills.extend(skills_from_section)
+                    logger.info(f"Extracted {len(skills_from_section)} skills from skills section")
+            
+            # If we couldn't extract skills from a dedicated section, try the full resume
+            if not detected_skills:
+                resume_entities = extract_entities_with_ner(resume_text)
+                if resume_entities and "SKILLS" in resume_entities:
+                    detected_skills = resume_entities["SKILLS"]
+                    logger.info(f"Detected {len(detected_skills)} skills in resume with NER")
+            
+            # Enhance skill detection with common skills lookup
+            common_skills = ["python", "javascript", "java", "c++", "react", "node.js", "html", "css", 
+                            "sql", "machine learning", "data analysis", "marketing", "sales", "communication",
+                            "leadership", "project management", "design", "research", "management", "analysis",
+                            "excel", "word", "powerpoint", "adobe", "social media", "content marketing",
+                            "seo", "sem", "project management", "team management", "strategy", "analytics",
+                            "email marketing", "campaign management", "budget management", "branding", 
+                            "digital marketing", "market research", "customer relationship management",
+                            "social media marketing", "brand management", "advertising"]
+            
+            for skill in common_skills:
+                if skill not in detected_skills and check_skill_match(resume_text, skill):
+                    detected_skills.append(skill)
+            
             # For each required skill, check if it's in the resume
             for skill in required_skills:
                 if check_skill_match(resume_text, skill):
                     matched_skills.append(skill)
-                
+            
             # Find additional skills not in required list
             for skill in detected_skills:
-                if skill not in required_skills and skill not in matched_skills:
+                if skill.lower() not in [s.lower() for s in required_skills] and skill.lower() not in [s.lower() for s in matched_skills]:
                     additional_skills.append(skill)
         except Exception as skill_error:
             logger.error(f"Error matching skills: {skill_error}")
@@ -1084,20 +1138,53 @@ def analyze_resume(extraction_result, job_details):
         
         # Apply relevance boost
         adjusted_match = skill_score + exp_score + edu_score + cert_score + keyword_score
-        final_match = min(100, int(adjusted_match + past_relevance_score))
+        
+        # If there are additional skills, give a small boost
+        additional_skills_boost = min(5, len(additional_skills))
+        
+        # Calculate final match score
+        final_match = min(100, int(adjusted_match + past_relevance_score + additional_skills_boost))
         
         # Try to get industry match if possible
         industry_info = {"detected": "unknown", "confidence": 0.0}
         try:
-            industry = get_industry_from_text(resume_text, job_details)
-            if industry:
-                industry_info = {"detected": industry, "confidence": 0.85}
+            if "industry_override" in job_details and job_details["industry_override"]:
+                industry = job_details["industry_override"].lower()
+                industry_info = {"detected": industry, "confidence": 0.95}
+            else:
+                industry = get_industry_from_text(resume_text, job_details)
+                if industry:
+                    industry_info = {"detected": industry, "confidence": 0.85}
+                    
+                # If still unknown, try to infer from job/resume content
+                if industry_info["detected"] == "unknown":
+                    # Common industry keywords
+                    industry_keywords = {
+                        "technology": ["software", "developer", "programmer", "coding", "tech", "it"],
+                        "finance": ["banking", "finance", "accounting", "investment", "financial"],
+                        "healthcare": ["medical", "health", "doctor", "nurse", "patient", "clinical"],
+                        "marketing": ["marketing", "brand", "social media", "advertising", "campaign"],
+                        "education": ["teacher", "professor", "curriculum", "education", "school", "university"],
+                        "sales": ["sales", "customer", "revenue", "client", "account manager"]
+                    }
+                    
+                    # Count occurrences of industry keywords
+                    counts = {industry: 0 for industry in industry_keywords}
+                    for industry, keywords in industry_keywords.items():
+                        for keyword in keywords:
+                            if keyword.lower() in resume_text.lower():
+                                counts[industry] += 1
+                    
+                    # Find industry with highest keyword count
+                    max_industry = max(counts, key=counts.get)
+                    if counts[max_industry] > 0:
+                        industry_info = {"detected": max_industry, "confidence": min(0.7, 0.4 + (counts[max_industry] * 0.05))}
         except Exception as ind_error:
             logger.error(f"Error detecting industry: {ind_error}")
         
         # Prepare the analysis result
         analysis_result = {
-            "match_percentage": final_match,
+            "match_percentage": str(final_match) + "%",
             "skills_match": {
                 "matched_skills": matched_skills,
                 "matched_count": match_count,
@@ -1197,7 +1284,7 @@ def get_fallback_response(resume_text, job_details, error_message):
     # Create a basic response with essential fields
     return {
         "error": f"Analysis error: {error_message}",
-        "match_percentage": max(20, match_percentage),  # Minimum 20% to avoid zero
+        "match_percentage": f"{max(20, match_percentage)}%",  # Ensure it's a string with %
         "recommendation": "Error during analysis - please review manually",
         "skills_match": {
             "matched_skills": matched_skills,
@@ -1225,6 +1312,11 @@ def get_fallback_response(resume_text, job_details, error_message):
         "keywords": {
             "match_ratio": "0/0",
             "match_percentage": 0
+        },
+        "industry": {
+            "detected": "unknown",
+            "confidence": 0,
+            "percentage_impact": "+0%"
         }
     }
 
@@ -1300,7 +1392,7 @@ def format_analysis_result(analysis):
         return f"Error: {analysis['error']}"
     
     result = "AI Insights\n"
-    result += f"Match Percentage:\n{analysis['match_percentage']}%\n\n"
+    result += f"Match Percentage:\n{analysis['match_percentage']}\n\n"
     
     # Industry information
     if "industry" in analysis:
@@ -1386,3 +1478,69 @@ def batch_process_resumes(resume_files, job_details, n_jobs=-1):
     )
     
     return dict(results) 
+
+def extract_skills_from_section(section_text):
+    """
+    Extract skills from a dedicated skills section in a resume
+    
+    Parameters:
+    - section_text: String with the skills section content
+    
+    Returns:
+    - List of extracted skills
+    """
+    if not section_text:
+        return []
+        
+    # Normalize text
+    section_text = normalize_text(section_text)
+    
+    skills = []
+    
+    # Check for common formats
+    
+    # 1. Comma-separated list
+    if "," in section_text:
+        skills.extend([s.strip() for s in section_text.split(",") if s.strip()])
+        
+    # 2. Bullet points or dashes
+    elif "-" in section_text or "•" in section_text or ":" in section_text:
+        # Split by line
+        lines = section_text.split("\n")
+        for line in lines:
+            # Remove bullet points and dashes
+            cleaned = re.sub(r'^[\s•\-–—:]+', '', line).strip()
+            if cleaned:
+                # If multiple skills on one line with slashes or ampersands
+                if "/" in cleaned or "&" in cleaned:
+                    parts = re.split(r'\s*/\s*|\s*&\s*', cleaned)
+                    skills.extend([p.strip() for p in parts if p.strip()])
+                else:
+                    skills.append(cleaned)
+    
+    # 3. Try to split by common phrases
+    else:
+        # Try to split by common separators
+        tokens = re.split(r'\s+[\-–—•:]\s+|\s{2,}|proficient in|familiar with|skilled in|knowledge of', section_text)
+        skills.extend([t.strip() for t in tokens if t.strip()])
+    
+    # Clean up skills:
+    # 1. Remove very short items (likely not skills)
+    # 2. Remove purely numeric items
+    # 3. Remove very long items (likely sentences)
+    skills = [s for s in skills if len(s) > 2 and not s.isdigit() and len(s) < 50]
+    
+    # Additional cleaning for marketing skills
+    clean_skills = []
+    for skill in skills:
+        # Remove any trailing/leading punctuation
+        skill = skill.strip('.,;:()[]{}')
+        
+        # Check if this is a valid skill (not just generic words)
+        if len(skill.split()) > 1 or len(skill) > 4:
+            clean_skills.append(skill)
+    
+    # Remove duplicates
+    clean_skills = list(dict.fromkeys(clean_skills))
+    
+    return clean_skills 

@@ -36,6 +36,16 @@ python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopw
 mkdir -p model_cache
 chmod -R 777 model_cache
 
+# Ensure API directories exist
+echo "Setting up API directories..."
+mkdir -p local_api render_api
+if [ ! -f render_api/__init__.py ]; then
+  touch render_api/__init__.py
+fi
+if [ ! -f local_api/__init__.py ]; then
+  touch local_api/__init__.py
+fi
+
 # Print current Python packages
 echo "Installed Python packages:"
 pip list

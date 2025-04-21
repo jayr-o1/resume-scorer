@@ -58,6 +58,8 @@ def main():
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, 
                        help=f"Number of worker processes (default: {DEFAULT_WORKERS})")
     parser.add_argument("--use-src", action="store_true", help="Use the src/api.py implementation instead of api/index.py")
+    parser.add_argument("--use-render", action="store_true", help="Use the render_api/app.py implementation for Render deployment")
+    parser.add_argument("--use-local", action="store_true", help="Use the local_api/app.py implementation for local development")
     parser.add_argument("--preload-models", action="store_true", help="Preload models before starting the server")
     
     args = parser.parse_args()
@@ -79,7 +81,35 @@ def main():
             logger.error(f"Error preloading models: {e}")
     
     # Determine which API implementation to use
-    app_path = "src.api:app" if args.use_src else "api.index:app"
+    app_path = "src.api:app"  # Default to src/api.py
+    
+    if args.use_render:
+        app_path = "render_api.app:app"
+        logger.info("Using Render API implementation")
+    elif args.use_local:
+        app_path = "local_api.app:app"
+        logger.info("Using Local API implementation")
+    elif args.use_src:
+        app_path = "src.api:app"
+        logger.info("Using Source API implementation")
+    else:
+        # Auto-detect based on environment
+        if ON_RENDER:
+            # Check if render_api directory exists
+            if os.path.exists(os.path.join(current_dir, "render_api")):
+                app_path = "render_api.app:app"
+                logger.info("Auto-detected Render environment, using render_api.app:app")
+            else:
+                app_path = "api.index:app"
+                logger.info("Auto-detected Render environment, falling back to api.index:app")
+        else:
+            # Check if local_api directory exists
+            if os.path.exists(os.path.join(current_dir, "local_api")):
+                app_path = "local_api.app:app"
+                logger.info("Auto-detected local environment, using local_api.app:app")
+            else:
+                app_path = "api.index:app"
+                logger.info("Auto-detected local environment, falling back to api.index:app")
     
     # Verify that the app path exists
     try:
@@ -91,9 +121,8 @@ def main():
         logger.info("Available modules:")
         for path in sys.path:
             logger.info(f" - {path}")
-        if args.use_src:
-            logger.warning("Falling back to api.index:app")
-            app_path = "api.index:app"
+        logger.warning("Falling back to api.index:app")
+        app_path = "api.index:app"
     
     # Log startup information
     logger.info(f"Starting API server on {args.host}:{args.port}")
