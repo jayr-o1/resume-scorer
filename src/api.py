@@ -600,14 +600,28 @@ async def add_skill(
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    """
-    Health check endpoint
-    """
-    return {
-        "status": "ok",
-        "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat()
-    }
+    """Health check endpoint for monitoring"""
+    try:
+        # Check system memory usage - return degraded if high
+        import psutil
+        memory = psutil.virtual_memory()
+        status = "ok"
+        if memory.percent > 90:
+            status = "degraded"
+            
+        # Return minimal response to save memory
+        return {
+            "status": status,
+            "timestamp": int(time.time()),
+            "memory_usage": memory.percent
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "error",
+            "timestamp": int(time.time()),
+            "error": str(e)
+        }
 
 # Debug endpoint for PDF extraction
 @app.post("/debug/extract-pdf")

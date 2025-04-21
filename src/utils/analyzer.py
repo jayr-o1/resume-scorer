@@ -592,7 +592,7 @@ def benchmark_against_industry(industry: str, analysis_result: Dict) -> Dict:
     }
 
 # Import skill ontology
-from utils.skill_ontology import get_skill_ontology
+from .skill_ontology import get_skill_ontology
 
 # Add regex patterns for job title and employment duration extraction
 JOB_TITLE_PATTERNS = [

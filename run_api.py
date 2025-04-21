@@ -1,6 +1,41 @@
 #!/usr/bin/env python3
 import argparse
 import uvicorn
+import os
+import sys
+import logging
+
+# Add the root directory to the path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Try to import config and memory monitor
+try:
+    from src.config import (
+        ENABLE_MEMORY_MONITORING, 
+        DEFAULT_WORKERS,
+        MAX_WORKERS,
+        ON_RENDER
+    )
+    from scripts.memory_monitor import MemoryMonitor
+    
+    # Start memory monitoring if enabled
+    if ENABLE_MEMORY_MONITORING:
+        logger.info("Starting memory monitoring")
+        memory_monitor = MemoryMonitor()
+        memory_monitor.start_monitoring()
+except ImportError as e:
+    logger.warning(f"Could not import config or memory monitor: {e}")
+    ENABLE_MEMORY_MONITORING = False
+    DEFAULT_WORKERS = 1
+    MAX_WORKERS = 4
+    ON_RENDER = "RENDER" in os.environ
 
 def main():
     parser = argparse.ArgumentParser(description="Run the Resume Scorer API server")
@@ -10,13 +45,39 @@ def main():
     parser.add_argument("--log-level", default="info", 
                       choices=["debug", "info", "warning", "error", "critical"],
                       help="Set logging level")
-    parser.add_argument("--workers", type=int, default=1, help="Number of worker processes (default: 1)")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, 
+                       help=f"Number of worker processes (default: {DEFAULT_WORKERS})")
     parser.add_argument("--use-src", action="store_true", help="Use the src/api.py implementation instead of api/index.py")
+    parser.add_argument("--preload-models", action="store_true", help="Preload models before starting the server")
     
     args = parser.parse_args()
     
+    # Cap workers based on environment
+    if ON_RENDER and args.workers > MAX_WORKERS:
+        logger.warning(f"Reducing workers from {args.workers} to {MAX_WORKERS} for Render compatibility")
+        args.workers = MAX_WORKERS
+    
+    # Preload models if requested
+    if args.preload_models:
+        logger.info("Preloading models...")
+        try:
+            from scripts.download_models import download_sentence_transformer, download_spacy_model
+            download_sentence_transformer()
+            download_spacy_model()
+            logger.info("Models preloaded successfully")
+        except Exception as e:
+            logger.error(f"Error preloading models: {e}")
+    
     # Determine which API implementation to use
     app_path = "src.api:app" if args.use_src else "api.index:app"
+    
+    # Log startup information
+    logger.info(f"Starting API server on {args.host}:{args.port}")
+    logger.info(f"Using API implementation: {app_path}")
+    logger.info(f"Workers: {args.workers}, Debug mode: {args.debug}")
+    
+    if ON_RENDER:
+        logger.info("Running on Render with optimized settings")
     
     # Run the API server
     uvicorn.run(
@@ -29,4 +90,13 @@ def main():
     )
 
 if __name__ == "__main__":
-    main() 
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("API server stopped by user")
+        # Stop memory monitoring if enabled
+        if ENABLE_MEMORY_MONITORING and 'memory_monitor' in locals():
+            memory_monitor.stop_monitoring()
+    except Exception as e:
+        logger.error(f"Error running API server: {e}")
+        sys.exit(1) 

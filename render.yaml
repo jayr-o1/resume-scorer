@@ -3,14 +3,51 @@ services:
       name: resume-scorer-api
       env: python
       buildCommand: bash render-build.sh
-      startCommand: python run_api.py --port=$PORT --host=0.0.0.0
+      startCommand: python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --preload-models
       envVars:
           - key: PYTHON_VERSION
             value: 3.10.0
           - key: PORT
             value: 8000
+          - key: ENVIRONMENT
+            value: production
+          - key: RENDER
+            value: true
+          - key: TRANSFORMERS_OFFLINE
+            value: 1
+          - key: HF_DATASETS_OFFLINE
+            value: 1
+          - key: PYTHONUNBUFFERED
+            value: 1
+          # Optimize Python memory usage
+          - key: PYTHONMALLOC
+            value: malloc
+          - key: MALLOC_TRIM_THRESHOLD_
+            value: 65536
+          # Disable JIT compilation to save memory
+          - key: PYTORCH_JIT
+            value: 0
+          # Keep memory footprint small
+          - key: OMP_NUM_THREADS
+            value: 1
+          - key: MKL_NUM_THREADS
+            value: 1
+          # Optimize garbage collection
+          - key: PYTHONGC
+            value: threshold-aggressive
+          # Increase memory reclamation
+          - key: TORCH_EXTENSIONS_CACHE
+            value: /tmp/torch_extensions
       plan: free
       disk:
           name: resume-scorer-data
-          mountPath: /data
+          mountPath: /opt/render/project/src/model_cache
           sizeGB: 2
+      healthCheckPath: /health
+      autoDeploy: false # Disable auto-deployment to save resources
+      # Add sensible auto-scaling parameters for free tier
+      scaling:
+          minInstances: 1
+          maxInstances: 1
+          targetMemoryPercent: 80
+          targetCPUPercent: 70
