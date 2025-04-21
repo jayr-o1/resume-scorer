@@ -5,8 +5,8 @@ services:
       env: python
       region: singapore
       plan: free
-      buildCommand: "./render-build.sh"
-      startCommand: "python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models --use-quantization --task-specific-models --optimize-memory --fallback-to-cpu --skip-onnx"
+      buildCommand: "./render-build.sh && chmod +x startup.sh"
+      startCommand: "./startup.sh"
       envVars:
           - key: PYTHON_VERSION
             value: 3.10.8
@@ -22,6 +22,18 @@ services:
             value: 1
           - key: PYTHONUNBUFFERED
             value: true
+          # Optimized import configuration
+          - key: PYTHONSTARTUP
+            value: cuda_patch.py
+          # Completely disable CUDA
+          - key: CUDA_VISIBLE_DEVICES
+            value: ""
+          - key: FORCE_CPU
+            value: 1
+          - key: NO_CUDA
+            value: 1
+          - key: DISABLE_CUDA
+            value: 1
           # Optimize Python memory usage
           - key: PYTHONMALLOC
             value: malloc
@@ -50,8 +62,6 @@ services:
             value: 1
           - key: MEMORY_CONSTRAINED
             value: 1
-          - key: CUDA_VISIBLE_DEVICES
-            value: ""
           - key: MODEL_WARMUP_ON_START
             value: true
           - key: ENABLE_DYNAMIC_RESOURCE_MANAGEMENT
@@ -61,10 +71,16 @@ services:
             value: 1
           # Retry settings for model loading
           - key: MODEL_LOAD_RETRIES
-            value: 3
+            value: 5
           # Tokenizer settings to reduce memory usage
           - key: TOKENIZERS_PARALLELISM
             value: false
+          # Safe mode
+          - key: SAFE_MODE
+            value: 1
+          # PyTorch specific optimizations
+          - key: PYTORCH_CUDA_ALLOC_CONF
+            value: max_split_size_mb:32
       healthCheckPath: /health
 
 # A Redis instance for job queuing (optional, use if you need background processing)
