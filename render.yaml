@@ -5,7 +5,7 @@ services:
       env: python
       region: singapore
       plan: free
-      buildCommand: "./render-build.sh && chmod +x startup.sh"
+      buildCommand: "./render-build.sh && chmod +x startup.sh && chmod +x cuda_patch.py"
       startCommand: "./startup.sh"
       envVars:
           - key: PYTHON_VERSION
