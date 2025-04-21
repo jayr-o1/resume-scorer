@@ -29,6 +29,8 @@ uvicorn>=0.25.0
 python-multipart>=0.0.6
 setuptools>=65.5.1
 wheel>=0.38.0
+# Added for faster HuggingFace model downloads
+huggingface-hub[hf_xet]
 # CPU version of PyTorch to save space
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.1+cpu 
