@@ -18,20 +18,5 @@ fi
 # Download NLTK data
 python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
 
-# Create any necessary directories
-mkdir -p ~/.streamlit
-
-# Create Streamlit config
-cat > ~/.streamlit/config.toml << EOF
-[server]
-headless = true
-enableCORS = false
-port = $PORT
-
-[theme]
-primaryColor="#F63366"
-backgroundColor="#FFFFFF"
-secondaryBackgroundColor="#F0F2F6"
-textColor="#262730"
-font="sans serif"
-EOF 
+# Create necessary directories for model caching
+mkdir -p model_cache 
