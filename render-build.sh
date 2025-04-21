@@ -20,6 +20,10 @@ pip install --no-cache-dir -r requirements-render.txt
 echo "Ensuring psutil is installed..."
 pip install --no-cache-dir psutil==5.9.5
 
+# Ensure bitsandbytes and accelerate for quantization
+echo "Installing quantization dependencies..."
+pip install --no-cache-dir bitsandbytes==0.41.1 accelerate==0.25.0
+
 # Cleanup pip cache to save space
 rm -rf ~/.cache/pip
 
@@ -50,6 +54,10 @@ fi
 echo "Installed Python packages:"
 pip list
 
+# Enable optimization flags for model download
+export USE_QUANTIZED_MODEL=1
+export USE_TASK_SPECIFIC_MODELS=1
+
 # Prepare the sentence transformer model for offline use
 echo "Preparing sentence transformer model for offline use..."
 python scripts/prepare_model_for_render.py
@@ -59,6 +67,28 @@ if [ $? -ne 0 ]; then
   echo "Falling back to standard model download..."
   python scripts/download_models.py
 fi
+
+# Download task-specific models
+echo "Downloading task-specific models..."
+python -c "
+import os
+import sys
+sys.path.insert(0, '.') 
+os.environ['USE_TASK_SPECIFIC_MODELS'] = '1'
+from scripts.download_models import download_task_specific_models
+download_task_specific_models()
+"
+
+# Prepare models for quantization
+echo "Preparing models for quantization..."
+python -c "
+import os
+import sys
+sys.path.insert(0, '.')
+os.environ['USE_QUANTIZED_MODEL'] = '1'
+from scripts.download_models import prepare_quantized_models
+prepare_quantized_models()
+"
 
 # Verify the models are downloaded
 echo "Verifying model cache directory contents:"
@@ -84,4 +114,5 @@ apt-get clean
 rm -rf /var/lib/apt/lists/*
 
 echo "Build completed with optimizations for Render free tier"
-echo "Model cache contains: $(ls -l model_cache/sentence_transformers)" 
+echo "Model cache contains: $(ls -l model_cache/sentence_transformers)"
+echo "Total model cache size: $(du -sh model_cache)" 

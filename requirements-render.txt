@@ -5,6 +5,10 @@ pdfplumber==0.10.3
 # Constrain transformer version and dependencies to reduce size
 transformers==4.38.2
 tokenizers==0.15.0
+# Add bitsandbytes for quantization
+bitsandbytes==0.41.1
+# Add accelerate for optimized transformer loading
+accelerate==0.25.0
 # Use the lightweight sentence transformers
 sentence-transformers==2.5.1
 spacy==3.7.2

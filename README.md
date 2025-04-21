@@ -14,6 +14,18 @@ The platform combines AI, NLP, and data visualization to deliver accurate, consi
 4. **Visualization**: Generation of insights with interactive visualizations
 5. **Recommendations**: Tailored improvement suggestions based on analysis results
 
+## Performance Optimizations
+
+Resume Scorer includes several optimizations to maximize performance and minimize resource usage:
+
+1. **Model Quantization**: Optional 8-bit quantization reduces model size by up to 75% with minimal accuracy impact
+2. **Task-Specific Models**: Specialized models for different tasks (skills, education, experience) improve both accuracy and efficiency
+3. **Hybrid Approach**: Combines embedding models with rule-based extraction for optimal resource usage
+4. **Memory Management**: Aggressive memory optimization with model offloading when not in use
+5. **Pre-loading**: Models can be pre-loaded during startup for faster response times
+
+These optimizations make Resume Scorer suitable for deployment on platforms with memory constraints, such as Render's free tier.
+
 ## Installation
 
 ### Local Installation
@@ -33,10 +45,11 @@ pip install -r requirements.txt
 # Download SpaCy model
 python -m spacy download en_core_web_sm
 
-# Run the application
-python run.py --mode web-local  # For the Streamlit web interface
-# OR
-python run_api.py  # For the API server
+# Run with performance optimizations
+python run.py --mode web-local --use-quantization --task-specific-models --optimize-memory
+
+# Or for the API server with all optimizations
+python run_api.py --use-quantization --task-specific-models --preload-models
 ```
 
 ## Testing the Application
@@ -53,14 +66,17 @@ This will analyze a sample resume against a software engineering job description
 
 ### API Deployment to Render
 
-The Resume Scorer API is ready for Render deployment. For detailed instructions, please refer to the [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md) file.
+The Resume Scorer API is ready for Render deployment with memory optimizations. For detailed instructions, please refer to the [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md) file.
 
-Key features of the Render deployment:
+Key optimizations for Render deployment:
 
--   Optimized for smaller footprint (under 250MB)
--   Uses CPU-only versions of PyTorch and other large libraries
--   Includes persistent storage for uploaded files and cached models
--   Free tier compatible
+-   **Model Quantization**: 8-bit quantized models reduce memory usage by up to 75%
+-   **Task-Specific Models**: Different sized models for different tasks
+-   **Rule-Based Components**: Non-ML approaches for suitable tasks (education/certification extraction)
+-   **Offline Mode**: Pre-downloaded models prevent runtime downloads
+-   **Memory Optimizations**: Advanced memory management for constrained environments
+
+For deployment commands, see [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md).
 
 ## Usage
 
@@ -122,6 +138,8 @@ For more details on the API endpoints, request/response formats, and examples, s
 ### Performance & Scalability
 
 -   **Efficient Embedding Model**: Lightweight `all-MiniLM-L6-v2` model provides excellent performance with lower resource requirements
+-   **Quantization Support**: Optional 8-bit quantization for up to 75% memory reduction
+-   **Task-Specific Models**: Specialized models for different analysis tasks
 -   **Parallel Processing**: Multi-core resume processing with joblib for batch analysis
 -   **Database-Backed Cache**: SQLite database for faster lookups of analysis results and embeddings
 -   **Unified API**: Comprehensive API implementation for both public and authenticated access

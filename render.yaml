@@ -3,12 +3,12 @@ services:
       name: resume-scorer-api
       env: python
       buildCommand: bash render-build.sh
-      startCommand: python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models
+      startCommand: python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models --use-quantization --task-specific-models --optimize-memory
       envVars:
           - key: PYTHON_VERSION
             value: 3.10.0
           - key: PORT
-            value: 8000
+            value: 8080
           - key: ENVIRONMENT
             value: production
           - key: RENDER
@@ -38,6 +38,13 @@ services:
           # Increase memory reclamation
           - key: TORCH_EXTENSIONS_CACHE
             value: /tmp/torch_extensions
+          # Enable model optimizations
+          - key: USE_QUANTIZED_MODEL
+            value: 1
+          - key: USE_TASK_SPECIFIC_MODELS
+            value: 1
+          - key: OPTIMIZE_MEMORY
+            value: 1
       plan: free
       disk:
           name: resume-scorer-data

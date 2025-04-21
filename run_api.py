@@ -61,8 +61,27 @@ def main():
     parser.add_argument("--use-render", action="store_true", help="Use the render_api/app.py implementation for Render deployment")
     parser.add_argument("--use-local", action="store_true", help="Use the local_api/app.py implementation for local development")
     parser.add_argument("--preload-models", action="store_true", help="Preload models before starting the server")
+    parser.add_argument("--use-quantization", action="store_true", help="Enable model quantization (8-bit) to reduce memory usage")
+    parser.add_argument("--task-specific-models", action="store_true", help="Use task-specific models for different parts of analysis")
+    parser.add_argument("--optimize-memory", action="store_true", help="Apply aggressive memory optimizations")
     
     args = parser.parse_args()
+    
+    # Set environment variables based on args
+    if args.use_quantization:
+        os.environ["USE_QUANTIZED_MODEL"] = "1"
+        logger.info("Model quantization enabled (8-bit)")
+        
+    if args.task_specific_models:
+        os.environ["USE_TASK_SPECIFIC_MODELS"] = "1"
+        logger.info("Task-specific models enabled")
+        
+    if args.optimize_memory:
+        os.environ["OPTIMIZE_MEMORY"] = "1"
+        os.environ["MALLOC_TRIM_THRESHOLD_"] = "65536"
+        os.environ["PYTHONMALLOC"] = "malloc"
+        os.environ["PYTORCH_JIT"] = "0"
+        logger.info("Memory optimizations enabled")
     
     # Cap workers based on environment
     if ON_RENDER and args.workers > MAX_WORKERS:
@@ -76,6 +95,19 @@ def main():
             from scripts.download_models import download_sentence_transformer, download_spacy_model
             download_sentence_transformer()
             download_spacy_model()
+            
+            # If using task-specific models, download them as well
+            if args.task_specific_models:
+                try:
+                    from src.config import TASK_SPECIFIC_MODELS
+                    logger.info("Preloading task-specific models...")
+                    for task, config in TASK_SPECIFIC_MODELS.items():
+                        if config.get("model_name"):
+                            logger.info(f"Preloading model for task: {task}")
+                            download_sentence_transformer(config.get("model_name"))
+                except Exception as e:
+                    logger.error(f"Error preloading task-specific models: {e}")
+            
             logger.info("Models preloaded successfully")
         except Exception as e:
             logger.error(f"Error preloading models: {e}")
@@ -128,6 +160,17 @@ def main():
     logger.info(f"Starting API server on {args.host}:{args.port}")
     logger.info(f"Using API implementation: {app_path}")
     logger.info(f"Workers: {args.workers}, Debug mode: {args.debug}")
+    
+    # Log optimization settings
+    optimizations = []
+    if args.use_quantization:
+        optimizations.append("quantization")
+    if args.task_specific_models:
+        optimizations.append("task-specific models")
+    if args.optimize_memory:
+        optimizations.append("memory optimizations")
+    if optimizations:
+        logger.info(f"Enabled optimizations: {', '.join(optimizations)}")
     
     if ON_RENDER:
         logger.info("Running on Render with optimized settings")

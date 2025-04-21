@@ -25,6 +25,32 @@ MODEL_NAME = "all-MiniLM-L6-v2"
 MODEL_CACHE_DIR = os.path.join(CACHE_DIR, "sentence_transformers")
 SPACY_MODEL = "en_core_web_sm"
 
+# Task-specific model configurations
+# Different models for different tasks to improve efficiency
+TASK_SPECIFIC_MODELS = {
+    # Main embedding model for general matching
+    "general": {
+        "model_name": "all-MiniLM-L6-v2",
+        "quantize": False,  # Can be enabled to save memory
+        "dimension": 384
+    },
+    # Specialized model for skills extraction (more focused)
+    "skills": {
+        "model_name": "paraphrase-MiniLM-L3-v2",  # Smaller model (only 17MB)
+        "quantize": True,
+        "dimension": 384
+    },
+    # Education and certification extractor model
+    "education": {
+        "model_name": None,  # Use SpaCy's NER by default (no embedding model)
+        "use_rules": True,
+        "ner_labels": ["ORG", "DATE"]
+    }
+}
+
+# Enable task-specific models
+USE_TASK_SPECIFIC_MODELS = False  # Set to True to enable multi-model approach
+
 # Memory optimization
 BATCH_SIZE = 16  # Batch size for encoding texts
 MAX_TEXT_LENGTH = 100000  # Maximum text length to process

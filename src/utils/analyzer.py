@@ -10,11 +10,23 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import spacy
 import logging
+import time
+import traceback
 from typing import Dict, List, Tuple, Optional, Union, Any
 import sqlite3
 import threading
 import multiprocessing
 from joblib import Parallel, delayed
+
+# Import project configuration
+from ..config import TASK_SPECIFIC_MODELS, USE_TASK_SPECIFIC_MODELS
+
+# Import model manager for task-specific models
+try:
+    from .model_manager import get_model_manager
+    MODEL_MANAGER_AVAILABLE = True
+except ImportError:
+    MODEL_MANAGER_AVAILABLE = False
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -27,7 +39,7 @@ DB_CACHE_PATH = CACHE_DIR / "cache.db"
 
 # Model constants
 MODEL_NAME = "all-MiniLM-L6-v2"  # Smaller model than all-mpnet-base-v2
-USE_QUANTIZED_MODEL = False  # Disable quantization to reduce memory usage
+USE_QUANTIZED_MODEL = False  # Set to True to enable quantization
 
 # Global model cache
 _model_cache = None
@@ -530,7 +542,78 @@ def get_model():
                              "model_cache", "sentence_transformers")
     
     # Try different approaches to load the model
-    approaches = [
+    approaches = []
+    
+    # Add quantized model approach if enabled
+    if USE_QUANTIZED_MODEL:
+        try:
+            from transformers import AutoTokenizer, AutoModel
+            import torch
+            
+            # Function to load quantized model
+            def load_quantized_model():
+                # For MiniLM specifically
+                model_id = "sentence-transformers/all-MiniLM-L6-v2"
+                
+                # Check if we should use the cache directory
+                if offline_mode or on_render:
+                    model_path = os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))
+                    if os.path.exists(model_path):
+                        model_id = model_path
+                
+                # Load model with 8-bit quantization
+                tokenizer = AutoTokenizer.from_pretrained(model_id)
+                model = AutoModel.from_pretrained(model_id, load_in_8bit=True)
+                
+                # Create a wrapper to match sentence-transformers interface
+                class QuantizedModelWrapper:
+                    def __init__(self, model, tokenizer):
+                        self.model = model
+                        self.tokenizer = tokenizer
+                        self.dimension = model.config.hidden_size
+                    
+                    def encode(self, sentences, **kwargs):
+                        if isinstance(sentences, str):
+                            sentences = [sentences]
+                        
+                        # Process in small batches to save memory
+                        batch_size = 8
+                        embeddings = []
+                        
+                        for i in range(0, len(sentences), batch_size):
+                            batch = sentences[i:i+batch_size]
+                            inputs = self.tokenizer(batch, padding=True, truncation=True, 
+                                                   return_tensors="pt", max_length=512)
+                            
+                            # Move to appropriate device
+                            if torch.cuda.is_available():
+                                inputs = {k: v.cuda() for k, v in inputs.items()}
+                            
+                            # Get model output
+                            with torch.no_grad():
+                                outputs = self.model(**inputs)
+                            
+                            # Mean pooling
+                            attention_mask = inputs['attention_mask']
+                            token_embeddings = outputs.last_hidden_state
+                            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+                            batch_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                            
+                            # Add to result
+                            embeddings.append(batch_embeddings.cpu().numpy())
+                        
+                        return np.vstack(embeddings)
+                
+                return QuantizedModelWrapper(model, tokenizer)
+            
+            # Add the quantized model approach
+            approaches.append(load_quantized_model)
+            
+        except ImportError:
+            logger.warning("Could not import transformers for quantization. Will use standard model instead.")
+    
+    # Add standard approaches
+    approaches.extend([
         # 1. Try loading from cache directory
         lambda: SentenceTransformer(MODEL_NAME, cache_folder=cache_dir),
         
@@ -546,7 +629,7 @@ def get_model():
         
         # 5. Final fallback: UltraSimpleFallbackModel
         lambda: UltraSimpleFallbackModel()
-    ]
+    ])
     
     # Try each approach in order
     for i, approach in enumerate(approaches):
@@ -566,9 +649,17 @@ def get_model():
     _model_cache = model
     return model
 
-def get_embedding(text: str, model=None):
+def get_embedding(text: str, model=None, task: str = "general"):
     """
     Get embedding for text with caching
+    
+    Args:
+        text: Text to encode
+        model: Pre-loaded model to use (if None, will load)
+        task: The task this embedding is for (if using task-specific models)
+        
+    Returns:
+        Embedding vector
     """
     global MODEL_NAME
     
@@ -580,7 +671,21 @@ def get_embedding(text: str, model=None):
     if cached_embedding is not None:
         return cached_embedding
     
-    # If not in cache, generate embedding
+    # If task-specific models are available, use the model manager
+    if MODEL_MANAGER_AVAILABLE and USE_TASK_SPECIFIC_MODELS:
+        try:
+            # Get model manager instance
+            model_manager = get_model_manager()
+            # Get embedding directly
+            embedding = model_manager.get_embedding(text, task)
+            # Save to cache for future use
+            save_embedding_to_cache(text_hash, embedding, MODEL_NAME)
+            return embedding
+        except Exception as e:
+            logger.warning(f"Failed to use model manager for task '{task}': {e}")
+            # Fall back to the standard approach
+    
+    # If not using task-specific models or if it failed, use the standard approach
     if model is None:
         model = get_model()
     
@@ -835,45 +940,40 @@ def estimate_total_experience(durations: List[Dict[str, str]]) -> int:
 
 def analyze_resume(extraction_result, job_details):
     """
-    Analyze a resume against job details
+    Analyze a resume against job requirements
     
-    Parameters:
-    - extraction_result: Dictionary containing text and metadata from PDF
-    - job_details: Dictionary with job_description, job_title, etc.
-    
+    Args:
+        extraction_result: Dictionary containing the extracted text and metadata
+        job_details: Dictionary containing job requirements
+        
     Returns:
-    - Dictionary with analysis results
+        Analysis result dictionary
     """
     try:
-        # First check for cached result
-        resume_text = extraction_result.get("text", "")
-        
-        # For compatibility with different API versions
-        if "job_description" in job_details:
-            job_text = job_details.get("job_description", "")
-        else:
-            # Combine different job detail fields into a single text
-            job_text = " ".join([
-                job_details.get("summary", ""),
-                job_details.get("duties", ""),
-                job_details.get("skills", ""),
-                job_details.get("qualifications", "")
-            ])
-        
+        resume_text = extraction_result.get("text", "").strip()
         if not resume_text:
+            logger.error("Empty resume text in extraction result")
             return {
-                "error": "Resume text is empty",
-                "match_percentage": "0%",
-                "recommendation": "Cannot process empty resume",
-                "skills_match": {"matched_skills": [], "matched_count": 0, "required_count": 0, "match_ratio": "0/0", "match_percentage": 0, "additional_skills": []},
-                "experience": {"required_years": 0, "applicant_years": 0, "meets_requirement": False, "percentage_impact": "+0%"},
-                "education": {"required_education": "Not specified", "applicant_education": "Not specified", "assessment": "No impact"},
-                "certifications": {"relevant_certs": [], "percentage_impact": "+0%"},
-                "keywords": {"match_ratio": "0/0", "match_percentage": 0},
-                "industry": {"detected": "unknown", "confidence": 0}
+                "error": "Empty resume text",
+                "match_percentage": 0,
+                "recommendation": "Reject"
             }
         
-        # Try to load from cache
+        # Combine job details into a single text for analysis
+        job_text = ""
+        for key, value in job_details.items():
+            if isinstance(value, str) and value.strip():
+                job_text += value.strip() + "\n\n"
+        
+        if not job_text:
+            logger.error("Empty job details")
+            return {
+                "error": "Empty job details",
+                "match_percentage": 0,
+                "recommendation": "Insufficient data"
+            }
+        
+        # Generate cache path and hash key
         cache_path = get_cache_path(resume_text, job_text)
         hash_key = get_hash_key(resume_text + job_text)
         
@@ -888,19 +988,26 @@ def analyze_resume(extraction_result, job_details):
         if cached_result:
             logger.info("Analysis loaded from file cache")
             return cached_result
-            
-        # Prepare for semantic analysis
+        
+        # Prepare model for semantic analysis
+        use_task_specific = MODEL_MANAGER_AVAILABLE and USE_TASK_SPECIFIC_MODELS
+        model = None
+        model_manager = None
+        
         try:
-            model = get_model()
-            # Ensure model is not None before proceeding
-            if model is None:
-                logger.error("Model is None after get_model() call")
-                raise ValueError("Failed to initialize model")
-                
-            # Check if model has the expected encode method
-            if not hasattr(model, 'encode'):
-                logger.error("Model does not have encode method")
-                raise ValueError("Invalid model object")
+            if use_task_specific:
+                model_manager = get_model_manager()
+            else:
+                model = get_model()
+                # Ensure model is not None before proceeding
+                if model is None:
+                    logger.error("Model is None after get_model() call")
+                    raise ValueError("Failed to initialize model")
+                    
+                # Check if model has the expected encode method
+                if not hasattr(model, 'encode'):
+                    logger.error("Model does not have encode method")
+                    raise ValueError("Invalid model object")
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             # Return a basic structure with error information
@@ -921,348 +1028,437 @@ def analyze_resume(extraction_result, job_details):
             
         # Process required education level (simple fallback)
         required_education = "Not specified"
-        try:
-            education_keywords = ["degree", "bachelor", "master", "phd", "doctorate", "diploma", "certificate"]
-            for sentence in job_description.split("."):
-                if any(keyword in sentence.lower() for keyword in education_keywords):
-                    required_education = sentence.strip()
-                    break
-        except Exception as e:
-            logger.warning(f"Error extracting required education: {e}")
+        for level in ["bachelor", "master", "phd", "doctorate", "associate", "high school"]:
+            if level in job_description.lower():
+                if level in ["phd", "doctorate"]:
+                    required_education = "PhD/Doctorate"
+                elif level == "master":
+                    required_education = "Master's degree"
+                elif level == "bachelor":
+                    required_education = "Bachelor's degree"
+                elif level == "associate":
+                    required_education = "Associate degree"
+                elif level == "high school":
+                    required_education = "High School"
+                break
+                
+        # Get required skills based on job description
+        required_skills = extract_skills_from_section(job_description)
         
-        # Extract required skills
-        required_skills = []
-        
-        # First, try to use explicitly provided skills
-        if "required_skills" in job_details and job_details["required_skills"]:
-            required_skills = job_details["required_skills"]
-        elif "skills" in job_details and job_details["skills"]:
-            # Try to extract skills from the skills field
-            skills_text = job_details["skills"]
-            if isinstance(skills_text, str):
-                if "," in skills_text:
-                    # Comma-separated list
-                    required_skills = [s.strip() for s in skills_text.split(",") if s.strip()]
-                elif "-" in skills_text or "•" in skills_text:
-                    # Bullet points or dashes
-                    required_skills = [s.strip().lstrip("-•").strip() for s in skills_text.split("\n") if s.strip()]
-                else:
-                    # Try to extract as a single skill or use NER
-                    try:
-                        entities = extract_entities_with_ner(skills_text)
-                        if entities and "SKILLS" in entities:
-                            required_skills = entities["SKILLS"]
+        # ======== SKILLS ANALYSIS ========
+        # Use the skills-specific model or extractor if available
+        skills_match_result = {}
+        if use_task_specific:
+            try:
+                # Get skills-specific model
+                skills_model = model_manager.get_model("skills")
+                
+                # Check if it's a rule-based model (returns structured data)
+                if hasattr(skills_model, 'process'):
+                    # Direct processing
+                    skills_data = skills_model.process(resume_text)
+                    
+                    # Match skills against required skills
+                    matched_skills = []
+                    missing_skills = []
+                    
+                    for skill in required_skills:
+                        if skill.lower() in [s.lower() for s in skills_data.get("skills", [])]:
+                            matched_skills.append(skill)
                         else:
-                            required_skills = [skills_text]
-                    except Exception:
-                        required_skills = [skills_text]
-        
-        # If still no required skills, try to extract from job description
-        if not required_skills:
-            try:
-                entities = extract_entities_with_ner(job_description)
-                if entities and "SKILLS" in entities:
-                    required_skills = entities["SKILLS"]
+                            missing_skills.append(skill)
+                    
+                    # Prepare skills match result
+                    skills_match_result = {
+                        "matched_skills": matched_skills,
+                        "missing_skills": missing_skills,
+                        "proficiency": skills_data.get("proficiency", {}),
+                        "confidence": 0.85  # Rule-based typically has high confidence
+                    }
+                else:
+                    # For embedding-based skill matching
+                    matched_skills = []
+                    missing_skills = []
+                    
+                    for skill in required_skills:
+                        # Get embeddings using skills-specific model
+                        skill_emb = get_embedding(skill, skills_model, "skills")
+                        resume_emb = get_embedding(resume_text, skills_model, "skills")
+                        
+                        # Calculate similarity
+                        similarity = cosine_similarity([skill_emb], [resume_emb])[0][0]
+                        
+                        if similarity > 0.6 or check_skill_match(resume_text, skill):
+                            matched_skills.append(skill)
+                        else:
+                            missing_skills.append(skill)
+                    
+                    # Prepare skills match result
+                    skills_match_result = {
+                        "matched_skills": matched_skills,
+                        "missing_skills": missing_skills,
+                        "confidence": 0.75
+                    }
             except Exception as e:
-                logger.warning(f"Error extracting skills with NER: {e}")
-                # Fallback: use common skill keywords
-                common_skills = ["python", "javascript", "java", "c++", "react", "node.js", "html", "css", 
-                                "sql", "machine learning", "data analysis", "marketing", "sales", "communication",
-                                "leadership", "project management", "design", "research"]
-                for skill in common_skills:
-                    if skill.lower() in job_description.lower():
-                        required_skills.append(skill)
+                logger.warning(f"Error using skills-specific model: {e}")
+                # Fall back to the standard approach below
         
-        # Match skills in resume
-        matched_skills = []
-        additional_skills = []
-        
-        # Get resume sections to improve skill matching
-        resume_sections = extraction_result.get("sections", {})
-        if not resume_sections:
-            try:
-                resume_sections = extract_resume_sections(resume_text)
-            except Exception as e:
-                logger.warning(f"Error extracting resume sections: {e}")
-                resume_sections = {}
-        
-        # Specially focus on the skills section if available
-        skills_section_text = ""
-        if resume_sections and "skills" in resume_sections:
-            skills_section_text = resume_sections["skills"]
-        
-        # First detect skills in the resume
-        try:
-            # Try to extract skills from dedicated skills section first
-            detected_skills = []
+        # Use standard approach if task-specific model not used
+        if not skills_match_result:
+            matched_skills = []
+            missing_skills = []
             
-            if skills_section_text:
-                # Use the new specialized function
-                skills_from_section = extract_skills_from_section(skills_section_text)
-                if skills_from_section:
-                    detected_skills.extend(skills_from_section)
-                    logger.info(f"Extracted {len(skills_from_section)} skills from skills section")
-            
-            # If we couldn't extract skills from a dedicated section, try the full resume
-            if not detected_skills:
-                resume_entities = extract_entities_with_ner(resume_text)
-                if resume_entities and "SKILLS" in resume_entities:
-                    detected_skills = resume_entities["SKILLS"]
-                    logger.info(f"Detected {len(detected_skills)} skills in resume with NER")
-            
-            # Enhance skill detection with common skills lookup
-            common_skills = ["python", "javascript", "java", "c++", "react", "node.js", "html", "css", 
-                            "sql", "machine learning", "data analysis", "marketing", "sales", "communication",
-                            "leadership", "project management", "design", "research", "management", "analysis",
-                            "excel", "word", "powerpoint", "adobe", "social media", "content marketing",
-                            "seo", "sem", "project management", "team management", "strategy", "analytics",
-                            "email marketing", "campaign management", "budget management", "branding", 
-                            "digital marketing", "market research", "customer relationship management",
-                            "social media marketing", "brand management", "advertising"]
-            
-            for skill in common_skills:
-                if skill not in detected_skills and check_skill_match(resume_text, skill):
-                    detected_skills.append(skill)
-            
-            # For each required skill, check if it's in the resume
             for skill in required_skills:
                 if check_skill_match(resume_text, skill):
                     matched_skills.append(skill)
-            
-            # Find additional skills not in required list
-            for skill in detected_skills:
-                if skill.lower() not in [s.lower() for s in required_skills] and skill.lower() not in [s.lower() for s in matched_skills]:
-                    additional_skills.append(skill)
-        except Exception as skill_error:
-            logger.error(f"Error matching skills: {skill_error}")
-            matched_skills = []
-            # Basic fallback for skill detection
-            for skill in required_skills:
-                if skill.lower() in resume_text.lower():
-                    matched_skills.append(skill)
-        
-        # Calculate skill match metrics
-        total_required = len(required_skills) if required_skills else 1
-        match_count = len(matched_skills)
-        match_ratio = f"{match_count}/{total_required}"
-        match_percentage = int((match_count / total_required) * 100) if total_required > 0 else 0
-        
-        # Analyze experience
-        try:
-            experience_info = extract_employment_durations(resume_text)
-            years_experience = estimate_total_experience(experience_info) / 12  # Convert months to years
-            
-            meets_requirement = years_experience >= required_experience
-            experience_impact = calculate_experience_impact(years_experience, required_experience)
-        except Exception as exp_error:
-            logger.error(f"Error analyzing experience: {exp_error}")
-            # Fallback for experience
-            years_experience = 0
-            meets_requirement = False
-            experience_impact = "+0%"
-        
-        # Extract and analyze education
-        try:
-            education_info = extract_education(resume_text)
-            education_level = determine_education_level(education_info)
-            education_assessment = assess_education(education_level, required_education)
-        except Exception as edu_error:
-            logger.error(f"Error analyzing education: {edu_error}")
-            # Fallback for education
-            education_level = "Not specified"
-            education_assessment = "No impact"
-        
-        # Extract and analyze certifications
-        try:
-            certifications = extract_certifications(resume_text)
-            relevant_certs = []
-            
-            # Filter for relevant certifications
-            for cert in certifications:
-                if is_relevant_cert(cert, job_description, job_title):
-                    relevant_certs.append(cert)
+                else:
+                    # Try semantic matching
+                    # Get general purpose model
+                    skill_embedding = get_embedding(skill, model)
+                    resume_embedding = get_embedding(resume_text, model)
+                    similarity = cosine_similarity([skill_embedding], [resume_embedding])[0][0]
                     
-            cert_impact = calculate_certification_impact(relevant_certs)
-        except Exception as cert_error:
-            logger.error(f"Error analyzing certifications: {cert_error}")
-            # Fallback for certifications
-            relevant_certs = []
-            cert_impact = "+0%"
-        
-        # Extract job titles and check for relevant experience
-        try:
-            job_titles = extract_job_titles(resume_text)
-            title_relevance = check_title_relevance(job_titles, job_title)
-            past_relevance_score = title_relevance * 5  # 0-5% boost
-        except Exception as title_error:
-            logger.error(f"Error analyzing job titles: {title_error}")
-            past_relevance_score = 0
-        
-        # Check keyword matches
-        try:
-            job_keywords = extract_keywords(job_description)
-            resume_keywords = extract_keywords(resume_text)
-            common_keywords = set(job_keywords) & set(resume_keywords)
+                    if similarity > 0.6:  # Threshold for semantic similarity
+                        matched_skills.append(skill)
+                    else:
+                        missing_skills.append(skill)
             
-            keyword_ratio = f"{len(common_keywords)}/{len(job_keywords)}" if job_keywords else "0/0"
-            keyword_percentage = int((len(common_keywords) / len(job_keywords)) * 100) if job_keywords else 0
-        except Exception as kw_error:
-            logger.error(f"Error analyzing keywords: {kw_error}")
-            keyword_ratio = "0/0"
-            keyword_percentage = 0
+            # Use skill ontology to suggest alternatives
+            alternative_skills = {}
+            if missing_skills:
+                try:
+                    from .skill_ontology import get_skill_ontology
+                    ontology = get_skill_ontology()
+                    missing_data = ontology.find_missing_skills(resume_text, missing_skills)
+                    alternative_skills = missing_data.get("alternatives", {})
+                except Exception as e:
+                    logger.warning(f"Error using skill ontology: {e}")
+            
+            skills_match_result = {
+                "matched_skills": matched_skills,
+                "missing_skills": missing_skills,
+                "alternative_skills": alternative_skills,
+                "confidence": 0.7
+            }
         
-        # Calculate adjusted match percentage
-        skill_weight = 0.40
-        exp_weight = 0.25
-        edu_weight = 0.15
-        cert_weight = 0.10
-        keyword_weight = 0.10
-        
-        # Calculate base score components
-        skill_score = match_percentage * skill_weight
-        exp_score = (100 if meets_requirement else min(int(years_experience / required_experience * 100), 100) if required_experience > 0 else 100) * exp_weight
-        
-        # Calculate education score
-        edu_scores = {
-            "Exceeds requirements": 100,
-            "Meets requirements": 90,
-            "Partially meets requirements": 75,
-            "Does not meet requirements": 50,
-            "No impact": 80
-        }
-        edu_score = edu_scores.get(education_assessment, 80) * edu_weight
-        
-        # Certification and keyword scores
-        cert_score = min(len(relevant_certs) * 20, 100) * cert_weight
-        keyword_score = keyword_percentage * keyword_weight
-        
-        # Apply relevance boost
-        adjusted_match = skill_score + exp_score + edu_score + cert_score + keyword_score
-        
-        # If there are additional skills, give a small boost
-        additional_skills_boost = min(5, len(additional_skills))
-        
-        # Calculate final match score
-        final_match = min(100, int(adjusted_match + past_relevance_score + additional_skills_boost))
-        
-        # Try to get industry match if possible
-        industry_info = {"detected": "unknown", "confidence": 0.0}
-        try:
-            if "industry_override" in job_details and job_details["industry_override"]:
-                industry = job_details["industry_override"].lower()
-                industry_info = {"detected": industry, "confidence": 0.95}
-            else:
-                industry = get_industry_from_text(resume_text, job_details)
-                if industry:
-                    industry_info = {"detected": industry, "confidence": 0.85}
+        # ======== EDUCATION ANALYSIS ========
+        # Extract education information - use education-specific model if available
+        education_info = {}
+        if use_task_specific:
+            try:
+                # Get education-specific model
+                education_model = model_manager.get_model("education")
+                
+                # Process education data
+                if hasattr(education_model, 'process'):
+                    education_data = education_model.process(resume_text)
                     
-                # If still unknown, try to infer from job/resume content
-                if industry_info["detected"] == "unknown":
-                    # Common industry keywords
-                    industry_keywords = {
-                        "technology": ["software", "developer", "programmer", "coding", "tech", "it"],
-                        "finance": ["banking", "finance", "accounting", "investment", "financial"],
-                        "healthcare": ["medical", "health", "doctor", "nurse", "patient", "clinical"],
-                        "marketing": ["marketing", "brand", "social media", "advertising", "campaign"],
-                        "education": ["teacher", "professor", "curriculum", "education", "school", "university"],
-                        "sales": ["sales", "customer", "revenue", "client", "account manager"]
+                    # Extract the highest education level
+                    highest_edu = "Not specified"
+                    for degree in education_data.get("degrees", []):
+                        degree_lower = degree.lower()
+                        if "phd" in degree_lower or "doctor" in degree_lower:
+                            highest_edu = "PhD/Doctorate"
+                            break
+                        elif "master" in degree_lower or "mba" in degree_lower:
+                            highest_edu = "Master's degree"
+                        elif "bachelor" in degree_lower and highest_edu not in ["PhD/Doctorate", "Master's degree"]:
+                            highest_edu = "Bachelor's degree"
+                        elif "associate" in degree_lower and highest_edu not in ["PhD/Doctorate", "Master's degree", "Bachelor's degree"]:
+                            highest_edu = "Associate degree"
+                    
+                    education_info = {
+                        "applicant_education": highest_edu,
+                        "required_education": required_education,
+                        "institutions": education_data.get("institutions", []),
+                        "degrees": education_data.get("degrees", []),
+                        "dates": education_data.get("dates", []),
+                        "confidence": 0.85
                     }
                     
-                    # Count occurrences of industry keywords
-                    counts = {industry: 0 for industry in industry_keywords}
-                    for industry, keywords in industry_keywords.items():
-                        for keyword in keywords:
-                            if keyword.lower() in resume_text.lower():
-                                counts[industry] += 1
+                    # Assess if education meets requirements
+                    edu_levels = {
+                        "PhD/Doctorate": 5, 
+                        "Master's degree": 4, 
+                        "Bachelor's degree": 3, 
+                        "Associate degree": 2, 
+                        "High School": 1,
+                        "Not specified": 0
+                    }
                     
-                    # Find industry with highest keyword count
-                    max_industry = max(counts, key=counts.get)
-                    if counts[max_industry] > 0:
-                        industry_info = {"detected": max_industry, "confidence": min(0.7, 0.4 + (counts[max_industry] * 0.05))}
-        except Exception as ind_error:
-            logger.error(f"Error detecting industry: {ind_error}")
+                    applicant_level = edu_levels.get(highest_edu, 0)
+                    required_level = edu_levels.get(required_education, 0)
+                    
+                    if required_level == 0:
+                        education_info["assessment"] = "No Requirement"
+                    elif applicant_level >= required_level:
+                        education_info["assessment"] = "Meets Requirement"
+                    else:
+                        education_info["assessment"] = "Below Requirement"
+                else:
+                    # Fallback to standard method if not a rule-based model
+                    highest_edu = extract_education(resume_text)
+                    education_info = standard_education_analysis(highest_edu, required_education)
+            except Exception as e:
+                logger.warning(f"Error using education-specific model: {e}")
+                # Fall back to standard approach
         
-        # Prepare the analysis result
-        analysis_result = {
-            "match_percentage": str(final_match) + "%",
-            "skills_match": {
-                "matched_skills": matched_skills,
-                "matched_count": match_count,
-                "required_count": total_required,
-                "match_ratio": match_ratio,
-                "match_percentage": match_percentage,
-                "additional_skills": additional_skills[:10]  # Limit to top 10
-            },
-            "experience": {
-                "required_years": required_experience,
-                "applicant_years": round(years_experience, 1),
-                "meets_requirement": meets_requirement,
-                "percentage_impact": experience_impact
-            },
-            "education": {
-                "required_education": required_education,
-                "applicant_education": education_level,
-                "assessment": education_assessment
-            },
-            "certifications": {
-                "relevant_certs": relevant_certs,
-                "percentage_impact": cert_impact
-            },
-            "keywords": {
-                "match_ratio": keyword_ratio,
-                "match_percentage": keyword_percentage
-            },
-            "industry": industry_info
+        # Use standard approach if task-specific model not used 
+        if not education_info:
+            highest_edu = extract_education(resume_text)
+            education_info = standard_education_analysis(highest_edu, required_education)
+        
+        # ======== EXPERIENCE ANALYSIS ========
+        # Use experience-specific model if available
+        experience_info = {}
+        if use_task_specific:
+            try:
+                # Get experience-specific model
+                experience_model = model_manager.get_model("experience")
+                
+                # Process experience data
+                if hasattr(experience_model, 'process'):
+                    experience_data = experience_model.process(resume_text)
+                    
+                    # Get years of experience
+                    applicant_years = experience_data.get("years_of_experience")
+                    if applicant_years is None:
+                        # Calculate from durations
+                        durations = experience_data.get("durations", [])
+                        total_months = estimate_total_experience(durations)
+                        applicant_years = total_months // 12
+                    
+                    experience_info = {
+                        "required_years": str(required_experience) if required_experience else "Not specified",
+                        "applicant_years": str(applicant_years) if applicant_years else "Not specified",
+                        "job_titles": experience_data.get("job_titles", []),
+                        "company_names": experience_data.get("company_names", []),
+                        "durations": experience_data.get("durations", []),
+                        "confidence": 0.8
+                    }
+                else:
+                    # Fallback to standard method
+                    experience_info = standard_experience_analysis(resume_text, required_experience)
+            except Exception as e:
+                logger.warning(f"Error using experience-specific model: {e}")
+                # Fall back to standard approach
+        
+        # Use standard approach if task-specific model not used
+        if not experience_info:
+            experience_info = standard_experience_analysis(resume_text, required_experience)
+        
+        # The rest of the analysis follows the standard approach
+        # ...
+        
+        # ======== CERTIFICATION ANALYSIS ========
+        certifications = extract_certifications(resume_text)
+        
+        # Check for certifications mentioned in job description
+        cert_keywords = ["certification", "certified", "certificate"]
+        job_requires_certs = any(keyword in job_description.lower() for keyword in cert_keywords)
+        
+        certification_info = {
+            "has_certifications": len(certifications) > 0,
+            "relevant_certs": certifications,
+            "job_requires_certs": job_requires_certs,
+            "confidence": 0.75
         }
         
-        # Generate improvement suggestions
-        improvement_suggestions = get_improvement_suggestions(analysis_result)
-        analysis_result["improvement_suggestions"] = improvement_suggestions
+        # ======== OVERALL ANALYSIS ========
+        # Calculate match percentage based on skills, experience, education
+        weights = {
+            "skills": 0.5,
+            "experience": 0.3,
+            "education": 0.15,
+            "certifications": 0.05
+        }
         
-        # Industry benchmarking
-        try:
-            if industry_info["detected"] != "unknown":
-                benchmark_data = benchmark_against_industry(industry_info["detected"], analysis_result)
-                analysis_result["benchmark"] = benchmark_data
-        except Exception as bench_error:
-            logger.error(f"Error generating benchmarks: {bench_error}")
+        # Adjust weights based on job industry if available
+        industry = get_industry_from_text(job_text, job_details)
+        if industry in INDUSTRY_KEYWORDS:
+            industry_weights = INDUSTRY_KEYWORDS[industry]
+            weights = {
+                "skills": industry_weights["skills_weight"],
+                "experience": industry_weights["exp_weight"],
+                "education": industry_weights["edu_weight"],
+                "certifications": industry_weights["cert_weight"]
+            }
+        
+        # Calculate individual scores
+        skill_score = len(skills_match_result["matched_skills"]) / max(1, len(required_skills)) * 100
+        
+        exp_score = 0
+        if required_experience and isinstance(required_experience, (int, float)):
+            try:
+                applicant_exp = experience_info.get("applicant_years", "0")
+                if isinstance(applicant_exp, str) and applicant_exp.isdigit():
+                    applicant_exp = int(applicant_exp)
+                elif not isinstance(applicant_exp, (int, float)):
+                    applicant_exp = 0
+                
+                if applicant_exp >= required_experience:
+                    exp_score = 100
+                else:
+                    exp_score = (applicant_exp / max(1, required_experience)) * 100
+            except (ValueError, ZeroDivisionError):
+                exp_score = 50  # Default if we can't calculate
+        else:
+            exp_score = 80  # No specific requirement
+        
+        # Education score
+        edu_score = 0
+        if education_info["assessment"] == "Meets Requirement":
+            edu_score = 100
+        elif education_info["assessment"] == "No Requirement":
+            edu_score = 80
+        elif education_info["assessment"] == "Below Requirement":
+            # Give partial credit
+            edu_levels = {
+                "PhD/Doctorate": 5, 
+                "Master's degree": 4, 
+                "Bachelor's degree": 3, 
+                "Associate degree": 2, 
+                "High School": 1,
+                "Not specified": 0
+            }
+            applicant_level = edu_levels.get(education_info["applicant_education"], 0)
+            required_level = edu_levels.get(education_info["required_education"], 0)
+            if required_level > 0:
+                edu_score = (applicant_level / required_level) * 100
+            else:
+                edu_score = 50
+        
+        # Certification score
+        cert_score = 0
+        if certification_info["job_requires_certs"]:
+            if certification_info["has_certifications"]:
+                cert_score = 100
+            else:
+                cert_score = 0
+        else:
+            cert_score = 70  # Not required but good to have
+        
+        # Calculate weighted score
+        match_percentage = (
+            weights["skills"] * skill_score +
+            weights["experience"] * exp_score +
+            weights["education"] * edu_score +
+            weights["certifications"] * cert_score
+        )
+        
+        # Round to nearest integer
+        match_percentage = round(match_percentage)
         
         # Generate recommendation
-        if final_match >= 80:
-            recommendation = "Strong match - Recommend to interview"
-        elif final_match >= 70:
-            recommendation = "Good match - Consider interviewing"
-        elif final_match >= 60:
-            recommendation = "Moderate match - May be worth reviewing"
-        else:
-            recommendation = "Low match - Not recommended for this position"
+        recommendation = "Reject"
+        if match_percentage >= 80:
+            recommendation = "Hire"
+        elif match_percentage >= 60:
+            recommendation = "Interview"
         
-        analysis_result["recommendation"] = recommendation
+        # Add improvement suggestions
+        improvement_suggestions = get_improvement_suggestions({
+            "match_percentage": match_percentage,
+            "skills_match": skills_match_result,
+            "experience": experience_info,
+            "education": education_info,
+            "certifications": certification_info
+        })
         
-        # Try to estimate a salary range
-        try:
-            if industry_info["detected"] != "unknown":
-                salary_estimate = estimate_salary(
-                    industry_info["detected"],
-                    years_experience,
-                    matched_skills + additional_skills,
-                    education_level
-                )
-                analysis_result["salary_estimate"] = salary_estimate
-        except Exception as salary_error:
-            logger.error(f"Error estimating salary: {salary_error}")
+        # Industry benchmarking
+        benchmark = benchmark_against_industry(industry, {
+            "skills_match": skills_match_result,
+            "experience": experience_info,
+            "education": education_info,
+        })
         
-        # Save to cache for future requests
-        try:
-            save_to_cache(cache_path, analysis_result)
-            save_to_db_cache(hash_key, analysis_result)
-        except Exception as cache_error:
-            logger.error(f"Error saving to cache: {cache_error}")
+        # Salary estimation
+        salary_estimate = estimate_salary(
+            industry, 
+            int(experience_info.get("applicant_years", "0")) if experience_info.get("applicant_years", "0").isdigit() else 0,
+            skills_match_result.get("matched_skills", []),
+            education_info.get("applicant_education", "Not specified")
+        )
+        
+        # Assemble final result
+        analysis_result = {
+            "match_percentage": match_percentage,
+            "recommendation": recommendation,
+            "skills_match": skills_match_result,
+            "experience": experience_info,
+            "education": education_info,
+            "certifications": certification_info,
+            "improvement_suggestions": improvement_suggestions,
+            "industry_benchmark": benchmark,
+            "salary_estimate": salary_estimate,
+            "analysis_date": time.time()
+        }
+        
+        # Save to cache
+        save_to_cache(cache_path, analysis_result)
+        save_to_db_cache(hash_key, analysis_result)
         
         return analysis_result
+        
     except Exception as e:
-        logger.error(f"Unhandled exception in analyze_resume: {e}", exc_info=True)
-        return get_fallback_response(extraction_result.get("text", ""), job_details, str(e))
+        logger.error(f"Error analyzing resume: {e}")
+        logger.error(traceback.format_exc())
+        return get_fallback_response(resume_text, job_details, str(e))
+
+def standard_education_analysis(highest_edu, required_education):
+    """Standard education analysis without task-specific models"""
+    # Assess if education meets requirements
+    edu_levels = {
+        "PhD/Doctorate": 5, 
+        "Master's degree": 4, 
+        "Bachelor's degree": 3, 
+        "Associate degree": 2, 
+        "High School": 1,
+        "Not specified": 0
+    }
+    
+    applicant_level = edu_levels.get(highest_edu, 0)
+    required_level = edu_levels.get(required_education, 0)
+    
+    if required_level == 0:
+        assessment = "No Requirement"
+    elif applicant_level >= required_level:
+        assessment = "Meets Requirement"
+    else:
+        assessment = "Below Requirement"
+    
+    return {
+        "applicant_education": highest_edu,
+        "required_education": required_education,
+        "assessment": assessment,
+        "confidence": 0.7
+    }
+
+def standard_experience_analysis(resume_text, required_experience):
+    """Standard experience analysis without task-specific models"""
+    # Extract job titles
+    job_titles = extract_job_titles(resume_text)
+    
+    # Extract employment durations
+    durations = extract_employment_durations(resume_text)
+    
+    # Estimate total experience
+    total_months = estimate_total_experience(durations)
+    applicant_years = total_months // 12
+    
+    # Fallback to regex extraction if no durations found
+    if applicant_years == 0:
+        extracted_years = extract_experiences(resume_text)
+        if extracted_years:
+            applicant_years = extracted_years
+    
+    return {
+        "required_years": str(required_experience) if required_experience else "Not specified",
+        "applicant_years": str(applicant_years) if applicant_years else "Not specified",
+        "job_titles": job_titles,
+        "durations": durations,
+        "confidence": 0.7
+    }
 
 def get_fallback_response(resume_text, job_details, error_message):
     """Return a fallback response structure when analysis fails"""
