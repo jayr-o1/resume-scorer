@@ -4,6 +4,8 @@ import uvicorn
 import os
 import sys
 import logging
+import time
+from pathlib import Path
 
 # Add the root directory to the path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -89,28 +91,16 @@ def main():
         args.workers = MAX_WORKERS
     
     # Preload models if requested
-    if args.preload_models:
-        logger.info("Preloading models...")
+    if args.preload_models or os.environ.get("MODEL_WARMUP_ON_START", "0") == "true":
+        logger.info("Pre-loading models...")
+        start_time = time.time()
         try:
-            from scripts.download_models import download_sentence_transformer, download_spacy_model
-            download_sentence_transformer()
-            download_spacy_model()
-            
-            # If using task-specific models, download them as well
-            if args.task_specific_models:
-                try:
-                    from src.config import TASK_SPECIFIC_MODELS
-                    logger.info("Preloading task-specific models...")
-                    for task, config in TASK_SPECIFIC_MODELS.items():
-                        if config.get("model_name"):
-                            logger.info(f"Preloading model for task: {task}")
-                            download_sentence_transformer(config.get("model_name"))
-                except Exception as e:
-                    logger.error(f"Error preloading task-specific models: {e}")
-            
-            logger.info("Models preloaded successfully")
+            from src.utils.model_manager import warmup_models
+            # Warm up the general model and skills-specific model
+            warmup_models(["general", "skills"])
+            logger.info(f"Models pre-loaded in {time.time() - start_time:.2f} seconds")
         except Exception as e:
-            logger.error(f"Error preloading models: {e}")
+            logger.error(f"Error pre-loading models: {e}")
     
     # Determine which API implementation to use
     app_path = "src.api:app"  # Default to src/api.py

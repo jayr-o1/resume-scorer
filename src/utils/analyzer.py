@@ -323,31 +323,35 @@ def check_skill_match(resume_text, skill):
             return True
             
         # Tech skills should be strictly matched, so check variants only for these skills
-        # Common variants for specific technologies
-        tech_skill_variants = {
-            'react': ['reactjs', 'react.js'],
-            'node.js': ['nodejs', 'node'],
-            'express.js': ['expressjs', 'express'],
-            'javascript': ['js', 'ecmascript'],
-            'typescript': ['ts'],
-            'mongodb': ['mongo'],
-            'postgresql': ['postgres', 'psql'],
-            'rest': ['restful', 'rest api', 'restapi'],
-            'git': ['github', 'gitlab', 'version control'],
-            'ci/cd': ['continuous integration', 'continuous deployment', 'jenkins', 'github actions'],
-            'aws': ['amazon web services', 'ec2', 's3', 'lambda'],
-            'azure': ['microsoft azure', 'azure cloud'],
-            'gcp': ['google cloud platform', 'google cloud'],
-        }
+        # Get variations using the expanded skill variations function
+        try:
+            from .model_manager import expand_skill_variations
+            variants = expand_skill_variations(skill)
+        except ImportError:
+            # Fallback to the hardcoded variants if model_manager not available
+            tech_skill_variants = {
+                'react': ['reactjs', 'react.js'],
+                'node.js': ['nodejs', 'node'],
+                'express.js': ['expressjs', 'express'],
+                'javascript': ['js', 'ecmascript'],
+                'typescript': ['ts'],
+                'mongodb': ['mongo'],
+                'postgresql': ['postgres', 'psql'],
+                'rest': ['restful', 'rest api', 'restapi'],
+                'git': ['github', 'gitlab', 'version control'],
+                'ci/cd': ['continuous integration', 'continuous deployment', 'jenkins', 'github actions'],
+                'aws': ['amazon web services', 'ec2', 's3', 'lambda'],
+                'azure': ['microsoft azure', 'azure cloud'],
+                'gcp': ['google cloud platform', 'google cloud'],
+            }
+            variants = tech_skill_variants.get(skill.lower(), [])
         
         # Check only specific tech variants with word boundaries
-        if skill.lower() in tech_skill_variants:
-            variants = tech_skill_variants[skill.lower()]
-            for variant in variants:
-                # Only match variants at word boundaries to avoid partial matches
-                variant_match = re.search(r'\b' + re.escape(variant) + r'\b', resume_text, re.IGNORECASE) is not None
-                if variant_match:
-                    return True
+        for variant in variants:
+            # Only match variants at word boundaries to avoid partial matches
+            variant_match = re.search(r'\b' + re.escape(variant) + r'\b', resume_text, re.IGNORECASE) is not None
+            if variant_match:
+                return True
         
         # No match found for tech skill
         return False
@@ -1771,3 +1775,52 @@ def extract_skills_from_section(section_text):
     clean_skills = list(dict.fromkeys(clean_skills))
     
     return clean_skills 
+
+def get_embedding_batch(texts: List[str], model=None, task: str = "general", batch_size: int = 8):
+    """
+    Get embeddings for multiple texts with batching and caching
+    
+    Args:
+        texts: List of texts to encode
+        model: Pre-loaded model to use (if None, will load)
+        task: The task this embedding is for (if using task-specific models)
+        batch_size: Size of batches for processing
+        
+    Returns:
+        Array of embedding vectors
+    """
+    global MODEL_NAME
+    
+    # Handle empty input
+    if not texts:
+        return np.array([])
+    
+    # If task-specific models are available, use the model manager
+    if MODEL_MANAGER_AVAILABLE and USE_TASK_SPECIFIC_MODELS:
+        try:
+            # Get model manager instance
+            model_manager = get_model_manager()
+            # Use batch processing
+            return model_manager.get_embedding_batch(texts, task, batch_size)
+        except Exception as e:
+            logger.warning(f"Failed to use model manager for batch embedding: {e}")
+            # Fall back to the standard approach
+    
+    # If not using task-specific models or if it failed, use the standard approach
+    if model is None:
+        model = get_model()
+    
+    # Use model's native batch processing if available
+    try:
+        if hasattr(model, 'encode'):
+            return model.encode(texts, batch_size=batch_size)
+    except Exception as e:
+        logger.warning(f"Native batch processing failed: {e}")
+    
+    # Fallback to processing one by one
+    embeddings = []
+    for text in texts:
+        embedding = get_embedding(text, model, task)
+        embeddings.append(embedding)
+    
+    return np.array(embeddings) 

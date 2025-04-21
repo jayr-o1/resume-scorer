@@ -6,6 +6,12 @@ import altair as alt
 import pandas as pd
 import json
 from pathlib import Path
+import logging
+import threading
+import time
+from flask import Flask, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
+import traceback
 
 # Add the src directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,7 +20,7 @@ if current_dir not in sys.path:
 
 # Now import the module functions directly
 from utils.pdf_extractor import extract_text_from_pdf, extract_resume_sections
-from utils.analyzer import analyze_resume, batch_process_resumes
+from utils.analyzer import analyze_resume, batch_process_resumes, format_analysis_result
 from utils.skill_ontology import get_skill_ontology
 from utils.visualizations import (
     create_skill_radar, 
@@ -24,6 +30,28 @@ from utils.visualizations import (
     create_missing_skills_chart,
     create_detailed_skills_breakdown
 )
+from config import (
+    DATA_DIR, MAX_FILE_SIZE, check_memory_usage, ENABLE_DYNAMIC_RESOURCE_MANAGEMENT, 
+    MEM_CHECK_INTERVAL
+)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Create Flask app
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+app.config['UPLOAD_FOLDER'] = os.path.join(DATA_DIR, 'uploads')
+app.config['ALLOWED_EXTENSIONS'] = {'pdf', 'docx', 'txt'}
+
+# Create upload folder if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Resource monitoring
+request_counter = 0
+resource_monitor_lock = threading.Lock()
+last_gc_time = time.time()
 
 st.set_page_config(page_title="AI Resume Scorer", layout="wide")
 
@@ -559,5 +587,150 @@ with st.sidebar:
         # This would populate the form with sample data
         st.success("Sample data loaded! Click 'Analyze Resume' to see results.")
 
-if __name__ == "__main__":
-    main() 
+def allowed_file(filename):
+    """Check if a file is allowed based on its extension"""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+def check_resources():
+    """Check system resources and take action if needed"""
+    global request_counter, last_gc_time
+    
+    with resource_monitor_lock:
+        request_counter += 1
+        
+        # Check resources periodically
+        if ENABLE_DYNAMIC_RESOURCE_MANAGEMENT and request_counter % MEM_CHECK_INTERVAL == 0:
+            if check_memory_usage():
+                # High memory usage detected
+                logger.warning("High memory usage detected. Performing memory cleanup.")
+                
+                # Clear model caches
+                try:
+                    from utils.model_manager import get_model_manager
+                    model_manager = get_model_manager()
+                    model_manager.clear_unused_models()
+                    logger.info("Cleared unused models")
+                except Exception as e:
+                    logger.error(f"Error clearing model cache: {e}")
+                
+                # Force Python garbage collection
+                import gc
+                gc.collect()
+                
+                # Clear CUDA cache if available
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logger.info("Cleared CUDA cache")
+                except:
+                    pass
+                
+                last_gc_time = time.time()
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': time.time()
+    })
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    """Analyze a resume against job requirements"""
+    # Check resources
+    check_resources()
+    
+    start_time = time.time()
+    
+    # Check if a file was uploaded
+    if 'resume' not in request.files:
+        return jsonify({
+            'error': 'No resume file provided',
+            'status': 'error'
+        }), 400
+    
+    resume_file = request.files['resume']
+    if resume_file.filename == '':
+        return jsonify({
+            'error': 'Empty resume filename',
+            'status': 'error'
+        }), 400
+    
+    # Check if job details were provided
+    if 'job' not in request.form:
+        return jsonify({
+            'error': 'No job details provided',
+            'status': 'error'
+        }), 400
+    
+    try:
+        # Parse job details
+        job_details = json.loads(request.form['job'])
+        
+        # Save uploaded file
+        if resume_file and allowed_file(resume_file.filename):
+            filename = secure_filename(resume_file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            resume_file.save(filepath)
+            
+            # Extract text from resume
+            extraction_result = extract_text_from_pdf(filepath)
+            
+            if extraction_result and extraction_result.get('text'):
+                # Analyze resume
+                analysis_result = analyze_resume(extraction_result, job_details)
+                
+                # Format result
+                formatted_result = format_analysis_result(analysis_result)
+                
+                # Return result
+                logger.info(f"Analysis completed in {time.time() - start_time:.2f} seconds")
+                return jsonify({
+                    'status': 'success',
+                    'result': analysis_result,
+                    'formatted_result': formatted_result,
+                    'processing_time': time.time() - start_time
+                })
+            else:
+                return jsonify({
+                    'error': 'Failed to extract text from resume',
+                    'status': 'error'
+                }), 400
+        else:
+            return jsonify({
+                'error': 'Invalid file type',
+                'status': 'error'
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error during analysis: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'status': 'error'
+        }), 500
+
+@app.route('/')
+def index():
+    """Serve the index page"""
+    return send_from_directory('static', 'index.html')
+
+@app.route('/static/<path:path>')
+def serve_static(path):
+    """Serve static files"""
+    return send_from_directory('static', path)
+
+@app.after_request
+def add_header(response):
+    """Add headers to prevent caching"""
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '-1'
+    return response
+
+if __name__ == '__main__':
+    # Run the app
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8000))) 

@@ -2,11 +2,13 @@ services:
     - type: web
       name: resume-scorer-api
       env: python
-      buildCommand: bash render-build.sh
-      startCommand: python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models --use-quantization --task-specific-models --optimize-memory
+      region: oregon
+      plan: starter
+      buildCommand: "./render-build.sh"
+      startCommand: "cd api && gunicorn --bind=0.0.0.0:$PORT --workers=2 --threads=2 app:app --timeout 120"
       envVars:
           - key: PYTHON_VERSION
-            value: 3.10.0
+            value: 3.10.8
           - key: PORT
             value: 8080
           - key: ENVIRONMENT
@@ -18,7 +20,7 @@ services:
           - key: HF_DATASETS_OFFLINE
             value: 1
           - key: PYTHONUNBUFFERED
-            value: 1
+            value: true
           # Optimize Python memory usage
           - key: PYTHONMALLOC
             value: malloc
@@ -45,6 +47,12 @@ services:
             value: 1
           - key: OPTIMIZE_MEMORY
             value: 1
+          - key: MEMORY_CONSTRAINED
+            value: 1
+          - key: CUDA_VISIBLE_DEVICES
+            value: ""
+          - key: MODEL_WARMUP_ON_START
+            value: true
       plan: free
       disk:
           name: resume-scorer-data
@@ -55,6 +63,19 @@ services:
       # Add sensible auto-scaling parameters for free tier
       scaling:
           minInstances: 1
-          maxInstances: 1
-          targetMemoryPercent: 80
-          targetCPUPercent: 70
+          maxInstances: 2
+          targetMemoryPercent: 85
+          targetCPUPercent: 80
+      resources:
+        limits:
+          memory: 1Gi
+          cpu: 0.5
+        requests:
+          memory: 512Mi
+          cpu: 0.25
+
+# A Redis instance for job queuing
+databases:
+  - name: resume-queue
+    plan: free
+    type: redis

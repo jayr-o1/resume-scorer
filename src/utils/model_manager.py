@@ -12,13 +12,15 @@ from pathlib import Path
 from functools import lru_cache
 import threading
 from typing import Dict, Optional, List, Union, Any, Callable
-
-# Import project configuration
+import torch
 from ..config import (
     TASK_SPECIFIC_MODELS, 
     USE_TASK_SPECIFIC_MODELS,
     MODEL_CACHE_DIR,
-    ENABLE_MODEL_OFFLOADING
+    ENABLE_MODEL_OFFLOADING,
+    CACHE_DIR,
+    check_memory_usage,
+    MEM_CHECK_INTERVAL
 )
 
 # Set up logging
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Global model cache with thread safety
 _model_cache = {}
 _model_cache_lock = threading.RLock()
+_request_counter = 0
 
 class ModelManager:
     """Manager class for task-specific models"""
@@ -36,6 +39,10 @@ class ModelManager:
         self.models = {}
         self.model_configs = TASK_SPECIFIC_MODELS
         self.use_task_specific = USE_TASK_SPECIFIC_MODELS
+        self.loaded_tasks = set()
+        self.request_count = 0
+        self.lazy_loading = True  # Enable lazy loading of models by default
+        self.models_warmed_up = False
     
     def get_model(self, task: str = "general"):
         """
@@ -58,10 +65,20 @@ class ModelManager:
             logger.warning(f"Task '{task}' not found in model configs. Using 'general' model.")
             task = "general"
         
+        # Increment request counter for memory checking
+        _request_counter += 1
+        
+        # Check memory usage periodically
+        if _request_counter % MEM_CHECK_INTERVAL == 0:
+            if check_memory_usage():
+                logger.warning("High memory usage detected - clearing unused models")
+                self.clear_unused_models()
+        
         # Thread-safe model cache access
         with _model_cache_lock:
             # Return cached model if available
             if task in _model_cache and _model_cache[task] is not None:
+                logger.debug(f"Using cached model for task '{task}'")
                 return _model_cache[task]
             
             # Get config for this task
@@ -78,6 +95,7 @@ class ModelManager:
             
             # Cache the model
             _model_cache[task] = model
+            self.loaded_tasks.add(task)
             return model
     
     def _load_embedding_model(self, config: Dict[str, Any]):
@@ -141,7 +159,7 @@ class ModelManager:
                         sentences = [sentences]
                     
                     # Process in small batches to save memory
-                    batch_size = 8
+                    batch_size = kwargs.get('batch_size', 8)
                     embeddings = []
                     
                     for i in range(0, len(sentences), batch_size):
@@ -280,11 +298,61 @@ class ModelManager:
             if task is None:
                 # Unload all models
                 _model_cache.clear()
+                self.loaded_tasks.clear()
                 logger.info("Unloaded all models")
             elif task in _model_cache:
                 # Unload specific model
                 del _model_cache[task]
+                if task in self.loaded_tasks:
+                    self.loaded_tasks.remove(task)
                 logger.info(f"Unloaded model for task '{task}'")
+    
+    def clear_unused_models(self, keep_tasks=None):
+        """
+        Clear all models except those needed for specified tasks
+        
+        Args:
+            keep_tasks: List of tasks to keep models for
+        """
+        if keep_tasks is None:
+            keep_tasks = ["general"]
+            
+        with _model_cache_lock:
+            tasks_to_remove = [task for task in _model_cache.keys() if task not in keep_tasks]
+            for task in tasks_to_remove:
+                del _model_cache[task]
+                if task in self.loaded_tasks:
+                    self.loaded_tasks.remove(task)
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Clear CUDA cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    
+    def warmup_models(self, tasks=None):
+        """
+        Pre-load models to reduce first-request latency
+        
+        Args:
+            tasks: List of tasks to warm up models for
+        """
+        if tasks is None:
+            tasks = ["general"]
+            
+        logger.info(f"Warming up models for tasks: {tasks}")
+        
+        for task in tasks:
+            model = self.get_model(task)
+            # Run a dummy embedding
+            dummy_text = "This is a warmup request."
+            if hasattr(model, 'encode'):
+                model.encode([dummy_text])
+            
+        self.models_warmed_up = True
+        logger.info("Model warmup complete")
 
 # Create a rule-based models module
 def create_rule_based_model(task, config):
@@ -363,3 +431,30 @@ def get_model_manager():
     if _model_manager is None:
         _model_manager = ModelManager()
     return _model_manager 
+
+def warmup_models(tasks=None):
+    """Pre-load models to reduce first-request latency"""
+    manager = get_model_manager()
+    manager.warmup_models(tasks)
+
+def expand_skill_variations(skill):
+    """Return common variations of a skill"""
+    variations = {
+        'react': ['reactjs', 'react.js'],
+        'node.js': ['nodejs', 'node'],
+        'express.js': ['expressjs', 'express'],
+        'javascript': ['js', 'ecmascript'],
+        'typescript': ['ts'],
+        'mongodb': ['mongo'],
+        'postgresql': ['postgres', 'psql'],
+        'python': ['py', 'python3'],
+        'java': ['core java', 'java se'],
+        'aws': ['amazon web services', 'amazon cloud'],
+        'azure': ['microsoft azure', 'azure cloud'],
+        'docker': ['container', 'containerization'],
+        'kubernetes': ['k8s', 'kube'],
+        'machine learning': ['ml', 'machine-learning'],
+        'artificial intelligence': ['ai'],
+        'data science': ['data analytics', 'data analysis'],
+    }
+    return variations.get(skill.lower(), [skill]) 
