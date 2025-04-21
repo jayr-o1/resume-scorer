@@ -18,6 +18,10 @@ export HF_DATASETS_OFFLINE=1
 echo "Installing dependencies with memory optimization..."
 pip install --no-cache-dir -r requirements-render.txt
 
+# Ensure psutil is installed (sometimes required for monitoring)
+echo "Ensuring psutil is installed..."
+pip install --no-cache-dir psutil==5.9.5
+
 # Cleanup pip cache to save space
 rm -rf ~/.cache/pip
 

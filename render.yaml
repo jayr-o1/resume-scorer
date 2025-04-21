@@ -3,7 +3,7 @@ services:
       name: resume-scorer-api
       env: python
       buildCommand: bash render-build.sh
-      startCommand: python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --preload-models --use-src=false
+      startCommand: python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --preload-models
       envVars:
           - key: PYTHON_VERSION
             value: 3.10.0

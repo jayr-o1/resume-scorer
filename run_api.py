@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 # Try to import config and memory monitor
 try:
+    # Try to ensure psutil is installed
+    try:
+        import psutil
+    except ImportError:
+        logger.warning("psutil not found, attempting to install...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil==5.9.5"])
+        import psutil
+        logger.info("psutil installed successfully")
+    
     from src.config import (
         ENABLE_MEMORY_MONITORING, 
         DEFAULT_WORKERS,
@@ -70,6 +80,20 @@ def main():
     
     # Determine which API implementation to use
     app_path = "src.api:app" if args.use_src else "api.index:app"
+    
+    # Verify that the app path exists
+    try:
+        module_path, app_name = app_path.split(":")
+        __import__(module_path)
+        logger.info(f"Successfully imported {module_path}")
+    except ImportError as e:
+        logger.error(f"Could not import {module_path}: {e}")
+        logger.info("Available modules:")
+        for path in sys.path:
+            logger.info(f" - {path}")
+        if args.use_src:
+            logger.warning("Falling back to api.index:app")
+            app_path = "api.index:app"
     
     # Log startup information
     logger.info(f"Starting API server on {args.host}:{args.port}")
