@@ -11,8 +11,6 @@ fi
 export PYTHONHASHSEED=0
 export PIP_NO_CACHE_DIR=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
 
 # Install dependencies with optimized requirements for Render
 echo "Installing dependencies with memory optimization..."
@@ -38,17 +36,36 @@ python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopw
 mkdir -p model_cache
 chmod -R 777 model_cache
 
-# Pre-download and cache all models for faster startup
-echo "Pre-downloading and caching models..."
-python scripts/download_models.py
+# Print current Python packages
+echo "Installed Python packages:"
+pip list
+
+# Prepare the sentence transformer model for offline use
+echo "Preparing sentence transformer model for offline use..."
+python scripts/prepare_model_for_render.py
+
+# Use the fallback download script if the special preparation fails
+if [ $? -ne 0 ]; then
+  echo "Falling back to standard model download..."
+  python scripts/download_models.py
+fi
 
 # Verify the models are downloaded
 echo "Verifying model cache directory contents:"
 find model_cache -type f | wc -l
 du -sh model_cache
+ls -la model_cache/sentence_transformers/
 
 # Make model cache files accessible
 chmod -R 755 model_cache
+
+# Set environment variables for offline use
+echo "Setting environment variables for offline use..."
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export PYTHONMALLOC=malloc
+export MALLOC_TRIM_THRESHOLD_=65536
+export PYTORCH_JIT=0
 
 # Clean up any temporary files to reduce image size
 echo "Cleaning up temporary files..."
@@ -56,10 +73,5 @@ rm -rf /tmp/* 2>/dev/null || true
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 
-# Set memory optimization variables for Python
-echo "Setting memory optimization environment variables..."
-export MALLOC_TRIM_THRESHOLD_=65536
-export PYTHONMALLOC=malloc
-export PYTORCH_JIT=0
-
-echo "Build completed with optimizations for Render free tier" 
+echo "Build completed with optimizations for Render free tier"
+echo "Model cache contains: $(ls -l model_cache/sentence_transformers)" 

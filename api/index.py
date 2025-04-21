@@ -140,18 +140,17 @@ async def analyze_resume_endpoint(
         logger.info(f"Extraction result for {resume.filename}: {len(extraction_result.get('text', '')) if extraction_result else 'None'} characters")
         
         if not extraction_result:
-            return JSONResponse(
-                status_code=422,
-                content={"error": "Could not extract text from the PDF", 
-                         "match_percentage": "0%",
-                         "recommendation": "Please provide a valid PDF resume",
-                         "skills_match": {},
-                         "experience": {},
-                         "education": {},
-                         "certifications": {},
-                         "keywords": {},
-                         "industry": {}}
-            )
+            return {
+                "error": "Could not extract text from the PDF", 
+                "match_percentage": "0%",
+                "recommendation": "Please provide a valid PDF resume",
+                "skills_match": {},
+                "experience": {},
+                "education": {},
+                "certifications": {},
+                "keywords": {},
+                "industry": {}
+            }
             
         if not extraction_result.get("text"):
             # Fix the case where text is None - convert to empty string
@@ -176,33 +175,37 @@ async def analyze_resume_endpoint(
                 "skills": "Not specified"
             }
         
+        # Get resume sections first for backup
+        resume_sections = extract_resume_sections(extraction_result["text"])
+        
         # Analyze the resume
         try:
             analysis = analyze_resume(extraction_result, job_dict)
             
-            # Get resume sections for enhanced response
-            resume_sections = extract_resume_sections(extraction_result["text"])
+            # Add resume sections to the response
             if resume_sections:
                 analysis["resume_sections"] = resume_sections
                 
             return analysis
             
         except Exception as e:
-            # Return a simplified analysis with error
+            # Return a simplified analysis with error but ensuring all required fields are present
             import traceback
             error_trace = traceback.format_exc()
             logger.error(f"Analysis error: {e}\n{error_trace}")
             
+            # Create a valid response with all required fields
             return {
                 "error": str(e),
                 "match_percentage": "0%",
                 "recommendation": "Error during analysis",
-                "skills_match": {},
+                "skills_match": {},  # Empty but valid dictionary
                 "experience": {},
                 "education": {},
                 "certifications": {},
                 "keywords": {},
-                "industry": {}
+                "industry": {},
+                "resume_sections": resume_sections or {}
             }
         
     except Exception as e:
@@ -210,18 +213,18 @@ async def analyze_resume_endpoint(
         error_trace = traceback.format_exc()
         logger.error(f"Error analyzing resume: {e}\n{error_trace}")
         
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e),
-                    "match_percentage": "0%",
-                    "recommendation": "Server error during analysis",
-                    "skills_match": {},
-                    "experience": {},
-                    "education": {},
-                    "certifications": {},
-                    "keywords": {},
-                    "industry": {}}
-        )
+        # Ensure we return a valid response format even for exceptions
+        return {
+            "error": str(e),
+            "match_percentage": "0%",
+            "recommendation": "Server error during analysis",
+            "skills_match": {},
+            "experience": {},
+            "education": {},
+            "certifications": {},
+            "keywords": {},
+            "industry": {}
+        }
 
 # Batch processing endpoint (future implementation)
 @app.post("/batch-analyze")

@@ -405,45 +405,96 @@ def load_embedding_from_cache(text_hash: str, model_name: str) -> Optional[np.nd
 
 def get_model():
     """
-    Get the sentence embedding model, optimized with quantization if enabled
+    Get or load the sentence transformer model
+    If running on Render or in offline mode, uses cached model
     """
-    global MODEL_NAME, USE_QUANTIZED_MODEL
+    global _model_cache
     
-    if not USE_QUANTIZED_MODEL:
-        return SentenceTransformer(MODEL_NAME)
+    if _model_cache is not None:
+        return _model_cache
+    
+    # Check if we're in offline mode
+    offline_mode = os.environ.get("TRANSFORMERS_OFFLINE", "0") == "1"
+    on_render = "RENDER" in os.environ
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "model_cache", "sentence_transformers")
     
     try:
-        # First try to use optimized ONNX model
-        import onnxruntime
-        from sentence_transformers.models import Pooling
-        from sentence_transformers import __version__ as st_version
-        from packaging import version
-        
-        # Only use ONNX if sentence-transformers version supports it
-        if version.parse(st_version) >= version.parse("2.2.0"):
-            # Check if model is cached
-            model_path = CACHE_DIR / f"{MODEL_NAME}_quantized"
+        # First attempt - try to load from the cache directory
+        logger.info(f"Attempting to load model from cache: {cache_dir}")
+        model = SentenceTransformer(MODEL_NAME, cache_folder=cache_dir)
+        _model_cache = model
+        logger.info("Successfully loaded model from cache")
+        return model
+    except Exception as e:
+        if offline_mode or on_render:
+            logger.error(f"Error loading model in offline mode: {e}")
             
-            if not model_path.exists():
-                logger.info(f"Quantizing model {MODEL_NAME} for faster inference...")
-                # First load the regular model
-                model = SentenceTransformer(MODEL_NAME)
-                # Then convert to ONNX format with quantization
-                model.onnx_export(
-                    output_path=str(model_path),
-                    quantize=True,
-                    opset_version=14
-                )
-                logger.info(f"Model quantized and saved to {model_path}")
+            # Fallback for Render: Use a direct path to the cached model if it exists
+            model_dir = os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))
+            if os.path.exists(model_dir):
+                try:
+                    logger.info(f"Attempting to load model from specific path: {model_dir}")
+                    from sentence_transformers import SentenceTransformer
+                    model = SentenceTransformer(model_dir)
+                    _model_cache = model
+                    logger.info("Successfully loaded model from direct path")
+                    return model
+                except Exception as inner_e:
+                    logger.error(f"Failed to load model from direct path: {inner_e}")
             
-            # Load with ONNX optimizations
-            return SentenceTransformer(str(model_path))
+            # Return a simple fallback for handling text
+            logger.warning("Using simple fallback for text processing")
+            from sentence_transformers import SentenceTransformer
+            
+            # Create a very simple model that returns basic embeddings
+            class SimpleFallbackModel:
+                def __init__(self):
+                    self.dimension = 384  # Similar to MiniLM-L6
+                
+                def encode(self, sentences, **kwargs):
+                    """Generate simple embeddings based on word frequencies"""
+                    import numpy as np
+                    from collections import Counter
+                    import re
+                    
+                    if isinstance(sentences, str):
+                        sentences = [sentences]
+                    
+                    embeddings = []
+                    for sentence in sentences:
+                        # Simple tokenization
+                        words = re.findall(r'\b\w+\b', sentence.lower())
+                        if not words:
+                            embeddings.append(np.zeros(self.dimension))
+                            continue
+                            
+                        # Count words
+                        counter = Counter(words)
+                        
+                        # Generate a simple embedding
+                        embedding = np.zeros(self.dimension)
+                        for i, (word, count) in enumerate(counter.most_common(min(self.dimension, len(counter)))):
+                            # Hash the word to a value
+                            word_val = sum(ord(c) for c in word) / 255.0
+                            embedding[i % self.dimension] = word_val * count / len(words)
+                        
+                        # Normalize
+                        norm = np.linalg.norm(embedding)
+                        if norm > 0:
+                            embedding = embedding / norm
+                        
+                        embeddings.append(embedding)
+                    
+                    return np.array(embeddings)
+            
+            _model_cache = SimpleFallbackModel()
+            return _model_cache
         else:
-            logger.warning(f"sentence-transformers {st_version} does not fully support ONNX. Using regular model.")
-            return SentenceTransformer(MODEL_NAME)
-    except ImportError:
-        logger.warning("ONNX Runtime not installed. Using regular model.")
-        return SentenceTransformer(MODEL_NAME)
+            # If not in offline mode, try again with regular loading
+            logger.info("Attempting to load model from HuggingFace Hub")
+            model = SentenceTransformer(MODEL_NAME)
+            _model_cache = model
+            return model
     except Exception as e:
         logger.error(f"Error setting up optimized model: {e}")
         logger.info(f"Falling back to standard model: {MODEL_NAME}")
