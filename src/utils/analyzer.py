@@ -305,6 +305,54 @@ def check_skill_match(resume_text, skill):
     resume_text = normalize_text(resume_text)
     skill = normalize_text(skill)
     
+    # Technical skills that should only match exactly
+    tech_skills = {
+        'typescript', 'node.js', 'express', 'graphql', 'postgresql', 'mongodb', 
+        'redis', 'aws', 'azure', 'docker', 'kubernetes', 'ci/cd', 'microservices',
+        'rest api', 'java', 'python', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
+        'react', 'angular', 'vue', 'svelte', 'next.js', 'nuxt'
+    }
+    
+    # For tech skills, only allow exact matches
+    if skill.lower() in tech_skills:
+        # Direct exact match for tech skills with word boundaries
+        regex_match = re.search(r'\b' + re.escape(skill) + r'\b', resume_text, re.IGNORECASE) is not None
+        
+        # Check for standalone tech word with word boundaries
+        if regex_match:
+            return True
+            
+        # Tech skills should be strictly matched, so check variants only for these skills
+        # Common variants for specific technologies
+        tech_skill_variants = {
+            'react': ['reactjs', 'react.js'],
+            'node.js': ['nodejs', 'node'],
+            'express.js': ['expressjs', 'express'],
+            'javascript': ['js', 'ecmascript'],
+            'typescript': ['ts'],
+            'mongodb': ['mongo'],
+            'postgresql': ['postgres', 'psql'],
+            'rest': ['restful', 'rest api', 'restapi'],
+            'git': ['github', 'gitlab', 'version control'],
+            'ci/cd': ['continuous integration', 'continuous deployment', 'jenkins', 'github actions'],
+            'aws': ['amazon web services', 'ec2', 's3', 'lambda'],
+            'azure': ['microsoft azure', 'azure cloud'],
+            'gcp': ['google cloud platform', 'google cloud'],
+        }
+        
+        # Check only specific tech variants with word boundaries
+        if skill.lower() in tech_skill_variants:
+            variants = tech_skill_variants[skill.lower()]
+            for variant in variants:
+                # Only match variants at word boundaries to avoid partial matches
+                variant_match = re.search(r'\b' + re.escape(variant) + r'\b', resume_text, re.IGNORECASE) is not None
+                if variant_match:
+                    return True
+        
+        # No match found for tech skill
+        return False
+    
+    # For non-tech skills, continue with the existing matching logic
     # Direct match
     if skill in resume_text:
         return True
@@ -315,23 +363,6 @@ def check_skill_match(resume_text, skill):
     
     # Common variants for specific technologies
     skill_variants = {
-        # Tech skills
-        'react': ['reactjs', 'react.js'],
-        'node.js': ['nodejs', 'node'],
-        'express.js': ['expressjs', 'express'],
-        'javascript': ['js', 'ecmascript'],
-        'typescript': ['ts'],
-        'mongodb': ['mongo'],
-        'postgresql': ['postgres', 'psql'],
-        'rest': ['restful', 'rest api', 'restapi'],
-        'git': ['github', 'gitlab', 'version control'],
-        'agile': ['scrum', 'kanban', 'sprint'],
-        'ci/cd': ['continuous integration', 'continuous deployment', 'jenkins', 'github actions'],
-        'unit testing': ['jest', 'mocha', 'testing', 'test driven'],
-        'aws': ['amazon web services', 'ec2', 's3', 'lambda'],
-        'azure': ['microsoft azure', 'azure cloud'],
-        'gcp': ['google cloud platform', 'google cloud'],
-        
         # Marketing skills
         'marketing': ['digital marketing', 'marketers', 'market', 'marketing strategy'],
         'social media marketing': ['social media', 'social marketing', 'facebook marketing', 'instagram marketing'],
@@ -1088,7 +1119,7 @@ def analyze_resume(extraction_result, job_details):
                         # Calculate similarity
                         similarity = cosine_similarity([skill_emb], [resume_emb])[0][0]
                         
-                        if similarity > 0.6 or check_skill_match(resume_text, skill):
+                        if similarity > 0.8 or check_skill_match(resume_text, skill):
                             matched_skills.append(skill)
                         else:
                             missing_skills.append(skill)
@@ -1118,7 +1149,7 @@ def analyze_resume(extraction_result, job_details):
                     resume_embedding = get_embedding(resume_text, model)
                     similarity = cosine_similarity([skill_embedding], [resume_embedding])[0][0]
                     
-                    if similarity > 0.6:  # Threshold for semantic similarity
+                    if similarity > 0.8:  # Threshold for semantic similarity - increased from 0.6 to 0.8 for more stringent matching
                         matched_skills.append(skill)
                     else:
                         missing_skills.append(skill)
