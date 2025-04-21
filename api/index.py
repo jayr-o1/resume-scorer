@@ -103,6 +103,22 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+# Define a fallback function to ensure valid response structure
+def get_fallback_response(error_message, resume_sections=None):
+    """Create a fallback response when analysis fails"""
+    return {
+        "error": str(error_message),
+        "match_percentage": "0%",
+        "recommendation": "Error during analysis",
+        "skills_match": {},
+        "experience": {},
+        "education": {},
+        "certifications": {},
+        "keywords": {},
+        "industry": {},
+        "resume_sections": resume_sections or {}
+    }
+
 # Analyze resume endpoint - public version matching the Streamlit app
 @app.post("/analyze", response_model=ResumeAnalysisResponse)
 async def analyze_resume_endpoint(
@@ -181,6 +197,23 @@ async def analyze_resume_endpoint(
         # Analyze the resume
         try:
             analysis = analyze_resume(extraction_result, job_dict)
+            
+            # Verify the response has all required fields
+            if not isinstance(analysis, dict):
+                logger.error(f"Invalid analysis result type: {type(analysis)}")
+                return get_fallback_response("Invalid analysis result type", resume_sections)
+            
+            # Check for required fields
+            required_fields = ["skills_match", "experience", "education", "certifications", "keywords", "industry"]
+            for field in required_fields:
+                if field not in analysis:
+                    analysis[field] = {}
+            
+            # Ensure match_percentage and recommendation are set
+            if "match_percentage" not in analysis:
+                analysis["match_percentage"] = "0%"
+            if "recommendation" not in analysis:
+                analysis["recommendation"] = "Error during analysis"
             
             # Add resume sections to the response
             if resume_sections:

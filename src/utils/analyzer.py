@@ -29,6 +29,9 @@ DB_CACHE_PATH = CACHE_DIR / "cache.db"
 MODEL_NAME = "all-MiniLM-L6-v2"  # Smaller model than all-mpnet-base-v2
 USE_QUANTIZED_MODEL = False  # Disable quantization to reduce memory usage
 
+# Global model cache
+_model_cache = None
+
 # Thread-local storage for database connections
 local_storage = threading.local()
 
@@ -491,14 +494,88 @@ def get_model():
             return _model_cache
         else:
             # If not in offline mode, try again with regular loading
-            logger.info("Attempting to load model from HuggingFace Hub")
-            model = SentenceTransformer(MODEL_NAME)
-            _model_cache = model
-            return model
+            try:
+                logger.info("Attempting to load model from HuggingFace Hub")
+                model = SentenceTransformer(MODEL_NAME)
+                _model_cache = model
+                return model
+            except Exception as load_e:
+                logger.error(f"Error loading model from HuggingFace Hub: {load_e}")
+                # Always ensure we set a fallback model if everything else fails
+                logger.warning("Using emergency fallback for text processing")
+                _model_cache = SimpleFallbackModel()  # Re-use the simple fallback model
+                return _model_cache
     except Exception as e:
         logger.error(f"Error setting up optimized model: {e}")
         logger.info(f"Falling back to standard model: {MODEL_NAME}")
-        return SentenceTransformer(MODEL_NAME)
+        try:
+            model = SentenceTransformer(MODEL_NAME)
+            _model_cache = model
+            return model
+        except Exception as final_e:
+            logger.error(f"Final error loading model: {final_e}")
+            # Ensure we always have a fallback
+            logger.warning("Using emergency fallback after all attempts failed")
+            
+            # Create a SimpleFallbackModel instance if it hasn't been defined yet
+            try:
+                if 'SimpleFallbackModel' not in locals():
+                    class SimpleFallbackModel:
+                        def __init__(self):
+                            self.dimension = 384  # Similar to MiniLM-L6
+                        
+                        def encode(self, sentences, **kwargs):
+                            """Generate simple embeddings based on word frequencies"""
+                            import numpy as np
+                            from collections import Counter
+                            import re
+                            
+                            if isinstance(sentences, str):
+                                sentences = [sentences]
+                            
+                            embeddings = []
+                            for sentence in sentences:
+                                # Simple tokenization
+                                words = re.findall(r'\b\w+\b', sentence.lower())
+                                if not words:
+                                    embeddings.append(np.zeros(self.dimension))
+                                    continue
+                                    
+                                # Count words
+                                counter = Counter(words)
+                                
+                                # Generate a simple embedding
+                                embedding = np.zeros(self.dimension)
+                                for i, (word, count) in enumerate(counter.most_common(min(self.dimension, len(counter)))):
+                                    # Hash the word to a value
+                                    word_val = sum(ord(c) for c in word) / 255.0
+                                    embedding[i % self.dimension] = word_val * count / len(words)
+                                
+                                # Normalize
+                                norm = np.linalg.norm(embedding)
+                                if norm > 0:
+                                    embedding = embedding / norm
+                                
+                                embeddings.append(embedding)
+                            
+                            return np.array(embeddings)
+                
+                _model_cache = SimpleFallbackModel()
+                return _model_cache
+            except Exception as final_final_e:
+                logger.error(f"Error creating fallback model: {final_final_e}")
+                # Last resort - create an extremely simple model that just returns zeros
+                class UltraSimpleFallbackModel:
+                    def __init__(self):
+                        self.dimension = 384
+                    
+                    def encode(self, sentences, **kwargs):
+                        if isinstance(sentences, str):
+                            sentences = [sentences]
+                        return np.zeros((len(sentences), self.dimension))
+                
+                _model_cache = UltraSimpleFallbackModel()
+                return _model_cache
 
 def get_embedding(text: str, model=None):
     """
@@ -769,322 +846,387 @@ def estimate_total_experience(durations: List[Dict[str, str]]) -> int:
 
 def analyze_resume(extraction_result, job_details):
     """
-    Main function to analyze a resume against job requirements
+    Analyze a resume against job details
     
     Parameters:
-    - extraction_result: Result from extract_text_from_pdf
-    - job_details: Dictionary with job details
+    - extraction_result: Dictionary containing text and metadata from PDF
+    - job_details: Dictionary with job_description, job_title, etc.
     
     Returns:
     - Dictionary with analysis results
     """
     try:
-        # Handle case where extraction_result is the text directly
-        if isinstance(extraction_result, str):
-            resume_text = extraction_result
-            extraction_result = {"text": resume_text, "language": "en", "extraction_method": "direct"}
+        # First check for cached result
+        resume_text = extraction_result.get("text", "")
+        job_text = job_details.get("job_description", "")
         
-        # Check if we have valid text
-        if not extraction_result or not extraction_result.get("text"):
+        if not resume_text:
             return {
-                "error": "Could not extract text from resume",
-                "match_percentage": "0%",
-                "recommendation": "Please provide a valid PDF resume",
-                "skills_match": {},
-                "experience": {},
-                "education": {},
-                "certifications": {},
-                "keywords": {},
-                "industry": {}
+                "error": "Resume text is empty",
+                "match_percentage": 0,
+                "recommendation": "Cannot process empty resume",
+                "skills_match": {"matched_skills": [], "matched_count": 0, "required_count": 0, "match_ratio": "0/0", "match_percentage": 0, "additional_skills": []},
+                "experience": {"required_years": 0, "applicant_years": 0, "meets_requirement": False, "percentage_impact": "+0%"},
+                "education": {"required_education": "Not specified", "applicant_education": "Not specified", "assessment": "No impact"},
+                "certifications": {"relevant_certs": [], "percentage_impact": "+0%"},
+                "keywords": {"match_ratio": "0/0", "match_percentage": 0}
             }
         
-        resume_text = extraction_result["text"]
+        # Try to load from cache
+        cache_path = get_cache_path(resume_text, job_text)
+        hash_key = get_hash_key(resume_text + job_text)
         
-        # Handle non-string text (e.g., None)
-        if resume_text is None:
-            resume_text = ""
-            
-        # Ensure resume_text is a string
-        if not isinstance(resume_text, str):
-            resume_text = str(resume_text)
-        
-        # Extract job requirements - filter out None values
-        job_text_parts = [
-            job_details.get('summary', '') or '',
-            job_details.get('duties', '') or '',
-            job_details.get('skills', '') or '',
-            job_details.get('qualifications', '') or ''
-        ]
-        job_text = " ".join(job_text_parts)
-        
-        # Generate hash for caching
-        combined = (resume_text + job_text).encode('utf-8')
-        hash_key = hashlib.md5(combined).hexdigest()
-        
-        # Check database cache first
+        # Try DB cache first
         cached_result = load_from_db_cache(hash_key)
         if cached_result:
+            logger.info("Analysis loaded from DB cache")
             return cached_result
-        
-        # Also check legacy file cache as fallback
-        cache_path = get_cache_path(resume_text, job_text)
+            
+        # Then try file cache
         cached_result = load_from_cache(cache_path)
         if cached_result:
-            # Migrate to DB cache
-            save_to_db_cache(hash_key, cached_result)
+            logger.info("Analysis loaded from file cache")
             return cached_result
-        
-        # Determine industry
-        industry = get_industry_from_text(resume_text, job_details)
-        industry_weights = INDUSTRY_KEYWORDS.get(industry, INDUSTRY_KEYWORDS["tech"])
-        
-        # Load model
-        model = get_model()
-        
-        # Extract skills from job description
-        skills_text = job_details.get('skills', '') or ''
-        skills_list = [s.strip().lower() for s in re.findall(r'[-•]?\s*([\w\s\+\#\.\-]+)(?:,|\n|$)', skills_text) if s]
-        skills_list = [s for s in skills_list if len(s) > 2]  # Filter out very short items
-        
-        # Ensure we have at least some skills to match against
-        if not skills_list:
-            skills_list = ["general skills"]
-        
-        # Use NER to enhance skills extraction
-        entities = extract_entities_with_ner(resume_text)
-        ner_skills = entities.get("SKILL", [])
-        
-        # Use skill ontology for better skill matching
-        skill_ontology = get_skill_ontology()
-        skill_results = skill_ontology.detect_skills(resume_text)
-        
-        # Normalize required skills
-        normalized_required_skills = [skill_ontology.normalize_skill(s) for s in skills_list if s]
-        normalized_required_skills = [s for s in normalized_required_skills if s]  # Filter out None values
-        
-        # Extract job titles and employment durations
-        job_titles = extract_job_titles(resume_text)
-        employment_durations = extract_employment_durations(resume_text)
-        estimated_years = estimate_total_experience(employment_durations)
-        
-        # Create embeddings with caching
-        resume_embedding = get_embedding(resume_text, model)
-        job_embedding = get_embedding(job_text, model)
-        
-        # Calculate overall similarity
-        similarity = cosine_similarity([resume_embedding], [job_embedding])[0][0]
-        match_percentage = int(similarity * 100)
-        
-        # Extract skills matches using the improved matcher
-        matched_skills = []
-        missing_skills = []
-        skill_details = []
-        
-        # First use the skill ontology results
-        resume_skill_names = {skill["normalized_name"] for skill in skill_results if skill.get("normalized_name")}
-        
-        for skill in normalized_required_skills:
-            if not skill:  # Skip None or empty skills
-                continue
+            
+        # Prepare for semantic analysis
+        try:
+            model = get_model()
+            # Ensure model is not None before proceeding
+            if model is None:
+                logger.error("Model is None after get_model() call")
+                raise ValueError("Failed to initialize model")
                 
-            if skill in resume_skill_names:
-                matched_skills.append(skill)
-                # Find the corresponding skill detail
-                for skill_detail in skill_results:
-                    if skill_detail.get("normalized_name") == skill:
-                        skill_details.append(skill_detail)
-                        break
+            # Check if model has the expected encode method
+            if not hasattr(model, 'encode'):
+                logger.error("Model does not have encode method")
+                raise ValueError("Invalid model object")
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            # Return a basic structure with error information
+            return get_fallback_response(resume_text, job_details, str(e))
+        
+        logger.info("Starting resume analysis")
+        
+        # Extract job requirements
+        job_title = job_details.get("job_title", "").strip()
+        job_description = job_details.get("job_description", "").strip()
+        required_skills = job_details.get("required_skills", [])
+        required_experience = job_details.get("required_experience", 0)
+        required_education = job_details.get("required_education", "Not specified")
+        
+        # Process the resume
+        try:
+            job_tokens = len(job_description.split())
+            resume_tokens = len(resume_text.split())
+            logger.info(f"Resume: {resume_tokens} tokens | Job description: {job_tokens} tokens")
+            
+            # To prevent memory issues with very large documents
+            resume_text_trimmed = " ".join(resume_text.split()[:25000])
+            job_description_trimmed = " ".join(job_description.split()[:5000])
+            
+            # Generate embeddings safely with error handling
+            try:
+                resume_embedding = get_embedding(resume_text_trimmed, model)
+                job_embedding = get_embedding(job_description_trimmed, model)
+                
+                # Verify embeddings are valid
+                if resume_embedding is None or job_embedding is None:
+                    logger.error("One or both embeddings are None")
+                    raise ValueError("Failed to generate embeddings")
+                
+                # Calculate similarity
+                similarity = np.dot(resume_embedding, job_embedding)
+                base_match_percentage = int(similarity * 100)
+            except Exception as embed_error:
+                logger.error(f"Error generating embeddings: {embed_error}")
+                # Fall back to a basic keyword matching approach
+                common_words = set(normalize_text(resume_text_trimmed).split()) & set(normalize_text(job_description_trimmed).split())
+                all_words = set(normalize_text(job_description_trimmed).split())
+                if all_words:
+                    base_match_percentage = int((len(common_words) / len(all_words)) * 60)  # Max 60% match with fallback
+                else:
+                    base_match_percentage = 30  # Default fallback
+        except Exception as e:
+            logger.error(f"Error in document processing: {e}")
+            return get_fallback_response(resume_text, job_details, str(e))
+        
+        # Analyze required skills
+        if not required_skills and job_description:
+            # If no skills provided, try extracting them
+            entities = extract_entities_with_ner(job_description)
+            if entities and "SKILLS" in entities:
+                required_skills = entities["SKILLS"]
+        
+        # Match skills in resume
+        matched_skills = []
+        additional_skills = []
+        
+        # First detect skills in the resume
+        try:
+            resume_entities = extract_entities_with_ner(resume_text)
+            if resume_entities and "SKILLS" in resume_entities:
+                detected_skills = resume_entities["SKILLS"]
+                logger.info(f"Detected {len(detected_skills)} skills in resume")
             else:
-                # Fallback to traditional matching if not found in ontology
+                detected_skills = []
+                
+            # For each required skill, check if it's in the resume
+            for skill in required_skills:
                 if check_skill_match(resume_text, skill):
                     matched_skills.append(skill)
-                else:
-                    # Last resort - check embedding similarity
-                    skill_embedding = get_embedding(skill, model)
-                    skill_similarity = cosine_similarity([resume_embedding], [skill_embedding])[0][0]
+                
+            # Find additional skills not in required list
+            for skill in detected_skills:
+                if skill not in required_skills and skill not in matched_skills:
+                    additional_skills.append(skill)
+        except Exception as skill_error:
+            logger.error(f"Error matching skills: {skill_error}")
+            matched_skills = []
+            # Basic fallback for skill detection
+            for skill in required_skills:
+                if skill.lower() in resume_text.lower():
+                    matched_skills.append(skill)
+        
+        # Calculate skill match metrics
+        total_required = len(required_skills) if required_skills else 1
+        match_count = len(matched_skills)
+        match_ratio = f"{match_count}/{total_required}"
+        match_percentage = int((match_count / total_required) * 100) if total_required > 0 else 0
+        
+        # Analyze experience
+        try:
+            experience_info = extract_employment_durations(resume_text)
+            years_experience = estimate_total_experience(experience_info) / 12  # Convert months to years
+            
+            meets_requirement = years_experience >= required_experience
+            experience_impact = calculate_experience_impact(years_experience, required_experience)
+        except Exception as exp_error:
+            logger.error(f"Error analyzing experience: {exp_error}")
+            # Fallback for experience
+            years_experience = 0
+            meets_requirement = False
+            experience_impact = "+0%"
+        
+        # Extract and analyze education
+        try:
+            education_info = extract_education(resume_text)
+            education_level = determine_education_level(education_info)
+            education_assessment = assess_education(education_level, required_education)
+        except Exception as edu_error:
+            logger.error(f"Error analyzing education: {edu_error}")
+            # Fallback for education
+            education_level = "Not specified"
+            education_assessment = "No impact"
+        
+        # Extract and analyze certifications
+        try:
+            certifications = extract_certifications(resume_text)
+            relevant_certs = []
+            
+            # Filter for relevant certifications
+            for cert in certifications:
+                if is_relevant_cert(cert, job_description, job_title):
+                    relevant_certs.append(cert)
                     
-                    if skill_similarity > 0.5:  # Threshold for skill match
-                        matched_skills.append(skill)
-                    else:
-                        missing_skills.append(skill)
+            cert_impact = calculate_certification_impact(relevant_certs)
+        except Exception as cert_error:
+            logger.error(f"Error analyzing certifications: {cert_error}")
+            # Fallback for certifications
+            relevant_certs = []
+            cert_impact = "+0%"
         
-        # Get alternative skills for missing required skills
-        missing_skills_results = skill_ontology.find_missing_skills(resume_text, missing_skills)
-        alternative_skills = missing_skills_results.get("alternative_skills", {})
+        # Extract job titles and check for relevant experience
+        try:
+            job_titles = extract_job_titles(resume_text)
+            title_relevance = check_title_relevance(job_titles, job_title)
+            past_relevance_score = title_relevance * 5  # 0-5% boost
+        except Exception as title_error:
+            logger.error(f"Error analyzing job titles: {title_error}")
+            past_relevance_score = 0
         
-        # Add NER-discovered skills that weren't in the job posting
-        additional_skills = [skill for skill in ner_skills if skill and skill not in matched_skills and skill not in missing_skills]
+        # Check keyword matches
+        try:
+            job_keywords = extract_keywords(job_description)
+            resume_keywords = extract_keywords(resume_text)
+            common_keywords = set(job_keywords) & set(resume_keywords)
+            
+            keyword_ratio = f"{len(common_keywords)}/{len(job_keywords)}" if job_keywords else "0/0"
+            keyword_percentage = int((len(common_keywords) / len(job_keywords)) * 100) if job_keywords else 0
+        except Exception as kw_error:
+            logger.error(f"Error analyzing keywords: {kw_error}")
+            keyword_ratio = "0/0"
+            keyword_percentage = 0
         
-        # Filter out None values in all skill lists
-        matched_skills = [s for s in matched_skills if s]
-        missing_skills = [s for s in missing_skills if s]
-        additional_skills = [s for s in additional_skills if s]
+        # Calculate adjusted match percentage
+        skill_weight = 0.40
+        exp_weight = 0.25
+        edu_weight = 0.15
+        cert_weight = 0.10
+        keyword_weight = 0.10
         
-        # Calculate match ratio
-        total_skills = len(normalized_required_skills)
-        matched_count = len(matched_skills)
-        match_ratio = f"{matched_count}/{total_skills}"
+        # Calculate base score components
+        skill_score = match_percentage * skill_weight
+        exp_score = (100 if meets_requirement else min(int(years_experience / required_experience * 100), 100) if required_experience > 0 else 100) * exp_weight
         
-        # Extract years of experience - now uses both explicit statements and employment durations
-        applicant_years_explicit = extract_experiences(resume_text)
+        # Calculate education score
+        edu_scores = {
+            "Exceeds requirements": 100,
+            "Meets requirements": 90,
+            "Partially meets requirements": 75,
+            "Does not meet requirements": 50,
+            "No impact": 80
+        }
+        edu_score = edu_scores.get(education_assessment, 80) * edu_weight
         
-        # Use the greater of the two methods
-        applicant_years = max(estimated_years, applicant_years_explicit or 0)
-        if applicant_years == 0:
-            applicant_years = "Not specified"
+        # Certification and keyword scores
+        cert_score = min(len(relevant_certs) * 20, 100) * cert_weight
+        keyword_score = keyword_percentage * keyword_weight
         
-        required_years_match = re.search(r'(\d+)\+?\s+years?', job_details.get('qualifications', ''))
-        required_years = required_years_match.group(1) if required_years_match else "Not specified"
+        # Apply relevance boost
+        adjusted_match = skill_score + exp_score + edu_score + cert_score + keyword_score
+        final_match = min(100, int(adjusted_match + past_relevance_score))
         
-        # Calculate experience impact on score
-        if isinstance(applicant_years, int) and isinstance(required_years, str) and required_years.isdigit():
-            req_years = int(required_years)
-            if applicant_years < req_years:
-                percentage_impact = f"-{min(20, (req_years - applicant_years) * 5)}%"
-            elif applicant_years > req_years:
-                percentage_impact = f"+{min(10, (applicant_years - req_years) * 2)}%"
-            else:
-                percentage_impact = "0%"
-        else:
-            percentage_impact = "0%"
+        # Try to get industry match if possible
+        industry_info = {"detected": "unknown", "confidence": 0.0}
+        try:
+            industry = get_industry_from_text(resume_text, job_details)
+            if industry:
+                industry_info = {"detected": industry, "confidence": 0.85}
+        except Exception as ind_error:
+            logger.error(f"Error detecting industry: {ind_error}")
         
-        # Extract education
-        applicant_education = extract_education(resume_text)
-        required_education = extract_education(job_details.get('qualifications', ''))
-        
-        education_levels = ["Not specified", "High School", "Associate degree", "Bachelor's degree", "Master's degree", "PhD/Doctorate"]
-        applicant_level = education_levels.index(applicant_education)
-        required_level = education_levels.index(required_education)
-        
-        if applicant_level >= required_level:
-            education_assessment = "Meets Requirement"
-        else:
-            education_assessment = "Below Requirement"
-        
-        # Extract certifications
-        certifications = extract_certifications(resume_text)
-        cert_impact = f"+{min(10, len(certifications) * 5)}%" if certifications else "0%"
-        
-        # Calculate keyword matching
-        important_keywords = []
-        for section in [job_details.get('summary', ''), job_details.get('duties', ''), job_details.get('qualifications', '')]:
-            words = re.findall(r'\b\w{3,}\b', section.lower())
-            important_keywords.extend([w for w in words if len(w) > 3])
-        
-        important_keywords = list(set(important_keywords))
-        
-        # Normalize resume text for keyword matching
-        normalized_resume = normalize_text(resume_text)
-        resume_words = set(re.findall(r'\b\w{3,}\b', normalized_resume))
-        
-        matched_keywords = [k for k in important_keywords if k in resume_words]
-        keyword_ratio = f"{len(matched_keywords)}/{len(important_keywords)}"
-        
-        # Calculate weighted score based on industry
-        skills_score = (matched_count / max(1, total_skills)) * 100
-        
-        exp_score = 0
-        if isinstance(applicant_years, int) and isinstance(required_years, str) and required_years.isdigit():
-            req_years = int(required_years)
-            exp_score = min(100, (applicant_years / max(1, req_years)) * 100)
-        
-        edu_score = (applicant_level / max(1, required_level)) * 100 if required_level > 0 else 100
-        
-        cert_score = min(100, len(certifications) * 25)
-        
-        keyword_score = (len(matched_keywords) / max(1, len(important_keywords))) * 100
-        
-        weighted_score = (
-            skills_score * industry_weights["skills_weight"] +
-            exp_score * industry_weights["exp_weight"] +
-            edu_score * industry_weights["edu_weight"] +
-            cert_score * industry_weights["cert_weight"] +
-            keyword_score * industry_weights["keyword_weight"]
-        )
-        
-        match_percentage = int(weighted_score)
-        
-        # Determine recommendation
-        if match_percentage >= 85:
-            recommendation = "Strong Hire"
-        elif match_percentage >= 70:
-            recommendation = "Hire"
-        elif match_percentage >= 50:
-            recommendation = "Consider"
-        else:
-            recommendation = "Reject"
-        
-        # Create the resume analysis dictionary
-        resume_analysis = {
-            "match_percentage": str(match_percentage),
+        # Prepare the analysis result
+        analysis_result = {
+            "match_percentage": final_match,
             "skills_match": {
                 "matched_skills": matched_skills,
-                "missing_skills": missing_skills,
-                "additional_skills": additional_skills,
-                "alternative_skills": alternative_skills,
+                "matched_count": match_count,
+                "required_count": total_required,
                 "match_ratio": match_ratio,
-                "skill_details": skill_details
+                "match_percentage": match_percentage,
+                "additional_skills": additional_skills[:10]  # Limit to top 10
             },
             "experience": {
-                "required_years": str(required_years),
-                "applicant_years": str(applicant_years),
-                "percentage_impact": percentage_impact,
-                "job_titles": job_titles,
-                "employment_durations": employment_durations,
-                "total_estimated_years": str(estimated_years) if estimated_years > 0 else "Not detected"
+                "required_years": required_experience,
+                "applicant_years": round(years_experience, 1),
+                "meets_requirement": meets_requirement,
+                "percentage_impact": experience_impact
             },
             "education": {
-                "requirement": required_education,
-                "applicant_education": applicant_education,
+                "required_education": required_education,
+                "applicant_education": education_level,
                 "assessment": education_assessment
             },
             "certifications": {
-                "relevant_certs": certifications,
+                "relevant_certs": relevant_certs,
                 "percentage_impact": cert_impact
             },
             "keywords": {
-                "matched": str(len(matched_keywords)),
-                "total": str(len(important_keywords)),
-                "match_ratio": keyword_ratio
+                "match_ratio": keyword_ratio,
+                "match_percentage": keyword_percentage
             },
-            "industry": {
-                "detected": industry,
-                "confidence": "high" if match_percentage > 70 else "medium"
-            }
+            "industry": industry_info
         }
         
-        # Add benchmark and improvement suggestions
-        resume_analysis["benchmark"] = benchmark_against_industry(industry, resume_analysis)
-        resume_analysis["improvement_suggestions"] = get_improvement_suggestions(resume_analysis)
-        resume_analysis["recommendation"] = recommendation
+        # Generate improvement suggestions
+        improvement_suggestions = get_improvement_suggestions(analysis_result)
+        analysis_result["improvement_suggestions"] = improvement_suggestions
         
-        # Add salary estimation if enough data
-        if isinstance(applicant_years, int) and applicant_years > 0 and len(matched_skills) > 0:
-            resume_analysis["salary_estimate"] = estimate_salary(
-                industry, applicant_years, matched_skills, applicant_education
-            )
+        # Industry benchmarking
+        try:
+            if industry_info["detected"] != "unknown":
+                benchmark_data = benchmark_against_industry(industry_info["detected"], analysis_result)
+                analysis_result["benchmark"] = benchmark_data
+        except Exception as bench_error:
+            logger.error(f"Error generating benchmarks: {bench_error}")
         
-        # Add confidence scores
-        resume_analysis["confidence_scores"] = {
-            "skills_match": min(100, 50 + (matched_count / max(1, total_skills)) * 50),
-            "experience_match": 90 if isinstance(applicant_years, int) else 50,
-            "education_match": 90 if applicant_level >= required_level else 70,
-            "overall": similarity * 100
-        }
+        # Generate recommendation
+        if final_match >= 80:
+            recommendation = "Strong match - Recommend to interview"
+        elif final_match >= 70:
+            recommendation = "Good match - Consider interviewing"
+        elif final_match >= 60:
+            recommendation = "Moderate match - May be worth reviewing"
+        else:
+            recommendation = "Low match - Not recommended for this position"
         
-        # Save to cache
-        save_to_db_cache(hash_key, resume_analysis)
-        save_to_cache(cache_path, resume_analysis)  # Legacy cache for backward compatibility
+        analysis_result["recommendation"] = recommendation
         
-        return resume_analysis
+        # Try to estimate a salary range
+        try:
+            if industry_info["detected"] != "unknown":
+                salary_estimate = estimate_salary(
+                    industry_info["detected"],
+                    years_experience,
+                    matched_skills + additional_skills,
+                    education_level
+                )
+                analysis_result["salary_estimate"] = salary_estimate
+        except Exception as salary_error:
+            logger.error(f"Error estimating salary: {salary_error}")
         
+        # Save to cache for future requests
+        try:
+            save_to_cache(cache_path, analysis_result)
+            save_to_db_cache(hash_key, analysis_result)
+        except Exception as cache_error:
+            logger.error(f"Error saving to cache: {cache_error}")
+        
+        return analysis_result
     except Exception as e:
-        logger.error(f"Error during local analysis: {e}", exc_info=True)
-        return {
-            "error": str(e),
-            "match_percentage": "0",
-            "recommendation": "Error during analysis"
+        logger.error(f"Unhandled exception in analyze_resume: {e}", exc_info=True)
+        return get_fallback_response(extraction_result.get("text", ""), job_details, str(e))
+
+def get_fallback_response(resume_text, job_details, error_message):
+    """Return a fallback response structure when analysis fails"""
+    logger.warning(f"Using fallback response due to: {error_message}")
+    
+    # Try basic matching as fallback
+    matched_skills = []
+    required_skills = job_details.get("required_skills", [])
+    
+    for skill in required_skills:
+        if skill.lower() in resume_text.lower():
+            matched_skills.append(skill)
+    
+    match_count = len(matched_skills)
+    total_required = len(required_skills) if required_skills else 1
+    match_ratio = f"{match_count}/{total_required}"
+    match_percentage = int((match_count / total_required) * 100) if total_required > 0 else 0
+    
+    # Create a basic response with essential fields
+    return {
+        "error": f"Analysis error: {error_message}",
+        "match_percentage": max(20, match_percentage),  # Minimum 20% to avoid zero
+        "recommendation": "Error during analysis - please review manually",
+        "skills_match": {
+            "matched_skills": matched_skills,
+            "matched_count": match_count,
+            "required_count": total_required,
+            "match_ratio": match_ratio,
+            "match_percentage": match_percentage,
+            "additional_skills": []
+        },
+        "experience": {
+            "required_years": job_details.get("required_experience", 0),
+            "applicant_years": 0,
+            "meets_requirement": False,
+            "percentage_impact": "+0%"
+        },
+        "education": {
+            "required_education": job_details.get("required_education", "Not specified"),
+            "applicant_education": "Not detected",
+            "assessment": "No impact"
+        },
+        "certifications": {
+            "relevant_certs": [],
+            "percentage_impact": "+0%"
+        },
+        "keywords": {
+            "match_ratio": "0/0",
+            "match_percentage": 0
         }
+    }
 
 def estimate_salary(industry: str, experience_years: int, skills: List[str], education: str) -> Dict:
     """
