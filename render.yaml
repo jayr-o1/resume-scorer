@@ -56,18 +56,7 @@ services:
             value: true
           - key: ENABLE_DYNAMIC_RESOURCE_MANAGEMENT
             value: true
-      disk:
-          name: resume-scorer-data
-          mountPath: /opt/render/project/src/model_cache
-          sizeGB: 1
       healthCheckPath: /health
-      autoDeploy: false # Disable auto-deployment to save resources
-      # Add sensible auto-scaling parameters for free tier
-      scaling:
-          minInstances: 0
-          maxInstances: 1
-          targetMemoryPercent: 85
-          targetCPUPercent: 80
 
 # A Redis instance for job queuing (optional, use if you need background processing)
 databases:
