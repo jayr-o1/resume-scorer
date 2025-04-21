@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to pre-download all required models and cache them for Render deployment.
+Script to pre-download all required models and cache them for deployment.
 """
 
 import os

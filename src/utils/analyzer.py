@@ -509,7 +509,7 @@ def load_embedding_from_cache(text_hash: str, model_name: str) -> Optional[np.nd
 def get_model():
     """
     Get or load the sentence transformer model
-    If running on Render or in offline mode, uses cached model
+    If running in offline mode, uses cached model
     """
     global _model_cache
     
@@ -572,7 +572,6 @@ def get_model():
     
     # Check if we're in offline mode
     offline_mode = os.environ.get("TRANSFORMERS_OFFLINE", "0") == "1"
-    on_render = "RENDER" in os.environ
     cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
                              "model_cache", "sentence_transformers")
     
@@ -591,7 +590,7 @@ def get_model():
                 model_id = "sentence-transformers/all-MiniLM-L6-v2"
                 
                 # Check if we should use the cache directory
-                if offline_mode or on_render:
+                if offline_mode:
                     model_path = os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))
                     if os.path.exists(model_path):
                         model_id = model_path
@@ -652,12 +651,12 @@ def get_model():
         # 1. Try loading from cache directory
         lambda: SentenceTransformer(MODEL_NAME, cache_folder=cache_dir),
         
-        # 2. Try loading from specific path for Render
+        # 2. Try loading from specific path for offline mode
         lambda: SentenceTransformer(os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))) 
                 if os.path.exists(os.path.join(cache_dir, MODEL_NAME.replace('/', '_'))) else None,
         
         # 3. Try loading directly from HuggingFace (if not in offline mode)
-        lambda: SentenceTransformer(MODEL_NAME) if not offline_mode and not on_render else None,
+        lambda: SentenceTransformer(MODEL_NAME) if not offline_mode else None,
         
         # 4. Use SimpleFallbackModel
         lambda: SimpleFallbackModel(),

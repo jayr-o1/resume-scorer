@@ -3,7 +3,6 @@
 Memory monitoring script for Resume Scorer.
 Tracks memory usage and performs cleanup when needed.
 Can be run as a background thread or standalone process.
-Optimized for Render's free tier deployment.
 """
 
 import os
@@ -25,11 +24,10 @@ if base_dir not in sys.path:
 
 # Import config
 try:
-    from src.config import MEMORY_MONITORING_INTERVAL, ENABLE_MEMORY_MONITORING, ON_RENDER
+    from src.config import MEMORY_MONITORING_INTERVAL, ENABLE_MEMORY_MONITORING
 except ImportError:
-    MEMORY_MONITORING_INTERVAL = 60  # Default: check more frequently on Render
+    MEMORY_MONITORING_INTERVAL = 300  # Default monitoring interval
     ENABLE_MEMORY_MONITORING = True
-    ON_RENDER = "RENDER" in os.environ
 
 # Set up logging
 logging.basicConfig(
@@ -42,10 +40,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("memory_monitor")
 
-# Memory thresholds (percentage) - lower for Render free tier
-WARNING_THRESHOLD = 70 if ON_RENDER else 80
-CRITICAL_THRESHOLD = 80 if ON_RENDER else 90
-EMERGENCY_THRESHOLD = 90 if ON_RENDER else 95
+# Memory thresholds (percentage)
+WARNING_THRESHOLD = 80
+CRITICAL_THRESHOLD = 90
+EMERGENCY_THRESHOLD = 95
 
 class MemoryMonitor:
     """Monitor memory usage and perform cleanup when needed"""
@@ -88,7 +86,7 @@ class MemoryMonitor:
         if not usage:
             return
         
-        # Only log every 5th check to reduce log size on Render
+        # Only log every 5th check to reduce log size
         self.cleanup_counter += 1
         if self.cleanup_counter % 5 == 0 or usage['system_percent'] > WARNING_THRESHOLD:
             logger.info(
@@ -109,34 +107,19 @@ class MemoryMonitor:
         current_time = time.time()
         time_since_cleanup = current_time - self.last_cleanup_time
         
-        # On Render, be more aggressive with cleanups
-        if ON_RENDER:
-            if system_percent >= EMERGENCY_THRESHOLD and time_since_cleanup >= 30:
-                logger.critical(f"EMERGENCY: Memory usage at {system_percent:.1f}%! Performing emergency cleanup")
-                self._emergency_cleanup()
-                self.last_cleanup_time = current_time
-            elif system_percent >= CRITICAL_THRESHOLD and time_since_cleanup >= 60:
-                logger.warning(f"CRITICAL: Memory usage at {system_percent:.1f}%! Performing aggressive cleanup")
-                self._aggressive_cleanup()
-                self.last_cleanup_time = current_time
-            elif system_percent >= WARNING_THRESHOLD and time_since_cleanup >= 120:
-                logger.warning(f"WARNING: Memory usage at {system_percent:.1f}%! Performing standard cleanup")
-                self._standard_cleanup()
-                self.last_cleanup_time = current_time
-        else:
-            # Standard thresholds for non-Render environments
-            if system_percent >= EMERGENCY_THRESHOLD and time_since_cleanup >= 60:
-                logger.critical(f"EMERGENCY: Memory usage at {system_percent:.1f}%! Performing emergency cleanup")
-                self._emergency_cleanup()
-                self.last_cleanup_time = current_time
-            elif system_percent >= CRITICAL_THRESHOLD and time_since_cleanup >= 300:
-                logger.warning(f"CRITICAL: Memory usage at {system_percent:.1f}%! Performing aggressive cleanup")
-                self._aggressive_cleanup()
-                self.last_cleanup_time = current_time
-            elif system_percent >= WARNING_THRESHOLD and time_since_cleanup >= 600:
-                logger.warning(f"WARNING: Memory usage at {system_percent:.1f}%! Performing standard cleanup")
-                self._standard_cleanup()
-                self.last_cleanup_time = current_time
+        # Standard thresholds for all environments
+        if system_percent >= EMERGENCY_THRESHOLD and time_since_cleanup >= 60:
+            logger.critical(f"EMERGENCY: Memory usage at {system_percent:.1f}%! Performing emergency cleanup")
+            self._emergency_cleanup()
+            self.last_cleanup_time = current_time
+        elif system_percent >= CRITICAL_THRESHOLD and time_since_cleanup >= 300:
+            logger.warning(f"CRITICAL: Memory usage at {system_percent:.1f}%! Performing aggressive cleanup")
+            self._aggressive_cleanup()
+            self.last_cleanup_time = current_time
+        elif system_percent >= WARNING_THRESHOLD and time_since_cleanup >= 600:
+            logger.warning(f"WARNING: Memory usage at {system_percent:.1f}%! Performing standard cleanup")
+            self._standard_cleanup()
+            self.last_cleanup_time = current_time
     
     def _standard_cleanup(self):
         """Perform standard memory cleanup"""
@@ -150,14 +133,12 @@ class MemoryMonitor:
             torch.cuda.empty_cache()
             logger.info("Cleared PyTorch CUDA cache")
         
-        # On Render, also trim memory
-        if ON_RENDER:
-            try:
-                import ctypes
-                ctypes.CDLL('libc.so.6').malloc_trim(0)
-                logger.info("Trimmed system memory with malloc_trim")
-            except:
-                logger.warning("Could not trim memory with malloc_trim")
+        try:
+            import ctypes
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+            logger.info("Trimmed system memory with malloc_trim")
+        except:
+            logger.warning("Could not trim memory with malloc_trim")
     
     def _aggressive_cleanup(self):
         """Perform more aggressive memory cleanup"""
@@ -178,9 +159,7 @@ class MemoryMonitor:
         gc.collect(generation=2)
         gc.collect(generation=2)
         
-        # On Render, look for large objects to clear
-        if ON_RENDER:
-            self._identify_and_remove_large_objects()
+        self._identify_and_remove_large_objects()
         
         logger.info("Completed aggressive cleanup")
     
@@ -227,24 +206,22 @@ class MemoryMonitor:
         for _ in range(3):
             gc.collect(generation=2)
         
-        # On Render with critical memory, take more drastic measures
-        if ON_RENDER:
-            try:
-                # Try to release as much memory as possible on Render
-                import ctypes
-                ctypes.CDLL('libc.so.6').malloc_trim(0)
-                
-                # Clear known caches in libraries
-                if 'sentence_transformers' in sys.modules:
-                    # Clear sentence transformer caches if possible
-                    import importlib
-                    importlib.reload(sys.modules['sentence_transformers'])
-                
-                # Last resort: manually trigger Python's own memory deallocation
-                for _ in range(3):
-                    gc.collect(generation=2)
-            except Exception as e:
-                logger.error(f"Error during emergency memory deallocation: {e}")
+        try:
+            # Try to release as much memory as possible
+            import ctypes
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+            
+            # Clear known caches in libraries
+            if 'sentence_transformers' in sys.modules:
+                # Clear sentence transformer caches if possible
+                import importlib
+                importlib.reload(sys.modules['sentence_transformers'])
+            
+            # Last resort: manually trigger Python's own memory deallocation
+            for _ in range(3):
+                gc.collect(generation=2)
+        except Exception as e:
+            logger.error(f"Error during emergency memory deallocation: {e}")
         
         logger.critical("Completed emergency cleanup")
     

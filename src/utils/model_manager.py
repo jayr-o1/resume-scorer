@@ -199,10 +199,9 @@ class ModelManager:
             
             # Check offline mode 
             offline_mode = os.environ.get("TRANSFORMERS_OFFLINE", "0") == "1"
-            on_render = "RENDER" in os.environ
             
             # Try different approaches to load the model
-            if offline_mode or on_render:
+            if offline_mode:
                 # Try loading from specific path
                 cache_path = Path(MODEL_CACHE_DIR) / model_name.replace('/', '_')
                 if cache_path.exists():

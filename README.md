@@ -1,269 +1,151 @@
 # Resume Scorer
 
-## About
+Resume Scorer is an AI-powered tool that analyzes resumes against job descriptions to help job seekers improve their applications and help employers screen candidates efficiently.
 
-Resume Scorer is an advanced AI-powered tool that analyzes resumes against job descriptions using natural language processing and semantic matching. The system helps recruiters and job seekers by providing objective assessments of how well a resume matches specific job requirements, offering visualization tools and actionable recommendations for improvement.
+## Key Features
 
-The platform combines AI, NLP, and data visualization to deliver accurate, consistent resume evaluations that eliminate human bias and increase efficiency in the hiring process. It supports both individual resume analysis and batch processing for recruitment teams.
+-   **Resume Analysis**: Perform detailed semantic analysis of resumes against job requirements
+-   **Skill Matching**: Identify matched and missing skills with detailed breakdown
+-   **Experience Analysis**: Evaluate work experience relevance to the position
+-   **Education Assessment**: Compare educational qualifications to job requirements
+-   **Improvement Suggestions**: Get actionable recommendations to improve application
+-   **Industry Benchmarking**: Compare resume scores against industry standards
+-   **Memory Optimized**: Runs efficiently on systems with limited resources
+-   **API Interface**: Access functionality via REST API
+-   **CPU-only Mode**: Works without requiring GPU acceleration
 
-## How It Works
+## Architecture
 
-1. **Text Extraction**: Enhanced PDF extraction with multiple fallback methods and language detection
-2. **Skill Detection**: Context-aware skill detection using a custom skill ontology
-3. **Semantic Matching**: Efficient semantic matching between resume and job requirements using all-MiniLM-L6-v2
-4. **Visualization**: Generation of insights with interactive visualizations
-5. **Recommendations**: Tailored improvement suggestions based on analysis results
+Resume Scorer uses a combination of LLM-based semantic analysis, named entity recognition, and domain-specific heuristics to provide accurate resume assessments:
 
-## Performance Optimizations
+-   **Document Processing**: Extract and structure text from PDF resumes
+-   **Semantic Matching**: Compare resume content to job requirements using embeddings
+-   **Skill Ontology**: Normalize and match skills across different naming conventions
+-   **Optimization Layer**: Memory-efficient implementations for resource-constrained environments
 
-Resume Scorer includes several optimizations to maximize performance and minimize resource usage:
+These optimizations make Resume Scorer suitable for deployment on platforms with memory constraints.
 
-1. **Model Quantization**: Optional 8-bit quantization reduces model size by up to 75% with minimal accuracy impact
-2. **Task-Specific Models**: Specialized models for different tasks (skills, education, experience) improve both accuracy and efficiency
-3. **Hybrid Approach**: Combines embedding models with rule-based extraction for optimal resource usage
-4. **Memory Management**: Aggressive memory optimization with model offloading when not in use
-5. **Pre-loading**: Models can be pre-loaded during startup for faster response times
+## Components
 
-These optimizations make Resume Scorer suitable for deployment on platforms with memory constraints, such as Render's free tier.
+The project consists of the following main components:
+
+-   **Core Analyzer**: The underlying resume analysis engine
+-   **API**: REST API for automated resume analysis
+-   **Memory Monitor**: Monitors and manages memory usage during analysis
+
+## Requirements
+
+-   Python 3.8 or higher
+-   Dependencies listed in requirements.txt
+-   Minimum 1GB RAM (2GB+ recommended)
+-   CPU with 2+ cores recommended
+-   Storage: 500MB for base models, 1GB+ recommended
 
 ## Installation
 
-### Local Installation
+1. Clone the repository:
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/resume-scorer.git
 cd resume-scorer
-
-# Create a virtual environment (optional but recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Download SpaCy model
-python -m spacy download en_core_web_sm
-
-# Run with performance optimizations
-python run.py --mode web-local --use-quantization --task-specific-models --optimize-memory
-
-# Or for the API server with all optimizations
-python run_api.py --use-quantization --task-specific-models --preload-models
 ```
 
-## Testing the Application
-
-You can quickly test the core functionality using the provided test script:
+2. Install dependencies:
 
 ```bash
-python test_analyzer.py
+pip install -r requirements.txt
 ```
 
-This will analyze a sample resume against a software engineering job description and show the match percentage, skills match, experience assessment, and other key metrics. The full analysis results will be saved to `analysis_results.json` for detailed inspection.
+3. Set up environment variables (optional):
 
-## Deployment
-
-### API Deployment to Render
-
-The Resume Scorer API is ready for Render deployment with memory optimizations. For detailed instructions, please refer to the [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md) file.
-
-Key optimizations for Render deployment:
-
--   **Model Quantization**: 8-bit quantized models reduce memory usage by up to 75%
--   **Task-Specific Models**: Different sized models for different tasks
--   **Rule-Based Components**: Non-ML approaches for suitable tasks (education/certification extraction)
--   **Offline Mode**: Pre-downloaded models prevent runtime downloads
--   **Memory Optimizations**: Advanced memory management for constrained environments
-
-For deployment commands, see [RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md).
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
 
 ## Usage
 
-### Streamlit Web Interface
+### API
 
-The Streamlit interface provides three main tabs:
-
-1. **Single Resume Analysis**:
-
-    - Upload a resume PDF
-    - Enter job details (summary, duties, skills, qualifications)
-    - Get a comprehensive analysis with visualizations
-
-2. **Batch Processing**:
-
-    - Upload multiple resumes
-    - Enter common job details
-    - Compare and rank candidates
-
-3. **Skill Ontology Management**:
-    - View the skill ontology database
-    - Add new skills with aliases and related skills
-
-### REST API
-
-The system provides a REST API that can be accessed with or without authentication:
+Run the API server for resume analysis:
 
 ```bash
-# Analyze a resume (public endpoint)
-curl -X POST "http://localhost:8000/analyze" \
-  -F "resume=@path/to/resume.pdf" \
-  -F "job_summary=Job summary text" \
-  -F "key_duties=Key responsibilities" \
-  -F "essential_skills=Required skills" \
-  -F "qualifications=Required qualifications"
-
-# List all skills
-curl -X GET "http://localhost:8000/skills"
-
-# Health check
-curl -X GET "http://localhost:8000/health"
-
-# Authenticated endpoints (require token)
-curl -X POST "http://localhost:8000/token" \
-  -d "username=demo&password=password" \
-  -H "Content-Type: application/x-www-form-urlencoded"
-
-# Use the token for authenticated endpoints
-curl -X POST "http://localhost:8000/analyze/auth" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -F "resume=@path/to/resume.pdf" \
-  -F "job_summary=Job summary text"
+python run_api.py --port=8000 --debug
 ```
 
-For more details on the API endpoints, request/response formats, and examples, see the [API_README.md](API_README.md) file.
+For quick testing in development:
 
-## Key Features & Improvements
+```bash
+python run_local_api.py
+```
 
-### Performance & Scalability
+API documentation is available at `http://localhost:8000/docs` when the server is running.
 
--   **Efficient Embedding Model**: Lightweight `all-MiniLM-L6-v2` model provides excellent performance with lower resource requirements
--   **Quantization Support**: Optional 8-bit quantization for up to 75% memory reduction
--   **Task-Specific Models**: Specialized models for different analysis tasks
--   **Parallel Processing**: Multi-core resume processing with joblib for batch analysis
--   **Database-Backed Cache**: SQLite database for faster lookups of analysis results and embeddings
--   **Unified API**: Comprehensive API implementation for both public and authenticated access
+For details on API endpoints and usage, see [API.md](API.md).
 
-### Accuracy & Analysis
+### API Client
 
--   **Skill Ontology**: Normalizes skill variations (e.g., "JS" → "JavaScript") with context-aware proficiency detection
--   **Enhanced Experience Extraction**: Detects job titles and extracts employment duration with total experience calculation
--   **Education & Certification Analysis**: Validates degrees and certifications with impact assessment
--   **Semantic Matching**: Two-stage matching process with confidence metrics for extracted data
+The repository includes a sample API client for testing:
 
-### User Experience
+```bash
+python api_client_example.py --url http://localhost:8000
+```
 
--   **Interactive Feedback**: Tailored resume improvement suggestions with alternative skills recommendations
--   **Advanced Visualizations**: Radar charts for skills/experience/education, comparison charts, and keyword density clouds
--   **Explainability**: Confidence scores, skill proficiency details, and salary estimations
--   **Resume Section Extraction**: Automatic extraction of resume sections for structured analysis
+## Testing
 
-### Integration & Deployment
+To verify that the analyzer is working correctly:
 
--   **Public API Endpoints**: Accessible without authentication, matching Streamlit functionality
--   **Render-Ready**: Optimized for deployment on Render's cloud platform
--   **Multi-Language Support**: Detection and translation for non-English resumes
--   **Comprehensive Error Handling**: Robust error handling and logging for production use
+```bash
+python test_analyzer.py
+```
 
-### Additional Capabilities
+## Performance Optimization
 
--   **ATS Compliance Checking**: Format analysis and section detection
--   **Exportable Reports**: Shareable visualizations and standardized JSON exports
--   **Testing Framework**: Unit tests and test utilities for quality assurance
+Resume Scorer includes several optimizations for performance and memory usage:
+
+-   **Quantized Models**: Optional 8-bit quantization for reduced memory usage
+-   **Task-specific Models**: Use specialized models for different analysis tasks
+-   **Memory Monitoring**: Active monitoring of memory usage with cleanup
+-   **Cache Management**: Intelligent caching with automatic trimming
+-   **CPU-only Mode**: Patched to run without GPU/CUDA dependencies
+
+Enable these optimizations with command-line flags:
+
+```bash
+python run_api.py --optimize-memory --use-quantization --task-specific-models
+```
 
 ## Project Structure
 
--   `src/` - Main source code
-    -   `app.py` - Streamlit web interface
-    -   `api.py` - FastAPI REST API implementation
-    -   `data/` - Sample data and skill ontology storage
-    -   `utils/` - Core functionality
-        -   `analyzer.py` - Resume analysis logic
-        -   `pdf_extractor.py` - PDF text extraction
-        -   `skill_ontology.py` - Skill normalization and detection
-        -   `visualizations.py` - Chart and visualization generation
--   `api/` - API implementation for deployment
-    -   `index.py` - Main API entry point (public endpoints)
-    -   `requirements.txt` - API-specific dependencies
--   `tests/` - Test utilities and unit tests
--   `model_cache/` - Local cache for downloaded models
--   `scripts/` - Utility scripts
+-   `src/` - Core source code
+    -   `utils/` - Utility modules (extractors, analyzers, etc.)
+    -   `data/` - Sample data and models
+    -   `config.py` - Configuration settings
+-   `scripts/` - Utility scripts for memory monitoring, model download, etc.
+-   `local_api/` - FastAPI implementation for local development
+-   `tests/` - Test files
+-   `model_cache/` - Directory for cached models
+
+## Key Files
+
+-   `run_api.py` - Main API server script
+-   `run_local_api.py` - Simplified API server for development
+-   `test_analyzer.py` - Test script for core functionality
 -   `requirements.txt` - Python dependencies
--   `requirements-render.txt` - Optimized dependencies for Render
--   `render.yaml` - Render configuration
--   `render-build.sh` - Build script for Render deployment
--   `run.py` - Main entry point for running the application
--   `run_api.py` - API server entry point
--   `test_analyzer.py` - Testing script for the analyzer
+-   `api_client_example.py` - Example API client
+-   `.env` - Environment variables (create from .env.example)
 
-## Technical Implementation Details
+## Advanced Features
 
-### Model Optimization
-
--   **Lightweight Embedding Model**: all-MiniLM-L6-v2 provides excellent performance with significantly lower resource usage compared to larger models
--   **Embedding Caching**: Database system to cache embeddings for reuse across analyses
--   **Thread-safety**: Thread-local database connections for concurrent access
-
-### Skill Ontology Design
-
--   **Skill Relationships**: Mapped relationships between skills to suggest alternatives for missing skills
--   **Context-aware Detection**: Detection of skill proficiency levels based on context
-
-### Semantic Similarity Technology
-
--   **Two-stage Matching**: Direct pattern matching combined with semantic similarity
--   **Confidence Metrics**: Detailed confidence scoring for all extracted data points
-
-### Deployment Infrastructure
-
--   **Render Configuration**: Easy deployment to Render's cloud platform
--   **Optimized Dependencies**: Smaller footprint for deployment
--   **Environment Configuration**: Production-ready environment settings
-
-## Running Tests
-
-```bash
-# Quick test of the analyzer
-python test_analyzer.py
-
-# Run unit tests
-python -m pytest tests/
-
-# Run with coverage
-python -m pytest --cov=src tests/
-```
-
-## Performance Results
-
-Testing with the sample resume against a software engineering job description yielded the following results:
-
--   **Match Percentage**: 76%
--   **Recommendation**: Hire
--   **Skills Match**: Matched 2/4 required skills (JavaScript, React)
--   **Missing Skills**: Python, API Development
--   **Experience**: Required 3 years | Applicant 6 years
--   **Education**: Bachelor's degree (Meets Requirement)
--   **Processing Time**: ~5 seconds for full analysis
-
-The all-MiniLM-L6-v2 model provides comparable results to larger models like MPNet while being much faster and using fewer resources, making it ideal for this application.
+-   **Batch Processing**: Process multiple resumes against the same job description
+-   **Custom Skill Ontology**: Extend the skill database with domain-specific terms
+-   **Memory Profiling**: Monitor and optimize memory usage during processing
+-   **Flexible Deployment**: Deploy as an API service or integrate with other systems
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
--   [Sentence-Transformers](https://www.sbert.net/) for embedding models
--   [SpaCy](https://spacy.io/) for NER and linguistic processing
--   [Streamlit](https://streamlit.io/) for the web interface
--   [FastAPI](https://fastapi.tiangolo.com/) for the API framework
+This project is licensed under the terms of the MIT license.

@@ -1,9 +1,0 @@
-build-essential
-pkg-config
-libssl-dev
-libffi-dev
-python3-dev
-tesseract-ocr
-libtesseract-dev
-libleptonica-dev
-poppler-utils 
