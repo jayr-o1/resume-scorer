@@ -13,7 +13,6 @@ tqdm>=4.65.0
 pandas>=2.0.0
 altair>=4.0.0
 joblib==1.2.0
-onnxruntime>=1.16.0
 packaging>=23.0
 redis>=5.0.0
 langdetect>=1.0.9

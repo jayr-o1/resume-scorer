@@ -7,6 +7,24 @@ if [ -f apt.txt ]; then
   cat apt.txt | xargs apt-get update && apt-get install -y
 fi
 
+# Set environment variables for optimized build
+export PYTHONHASHSEED=0
+export PIP_NO_CACHE_DIR=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install pip-tools to handle dependencies better
+pip install --no-cache-dir pip-tools
+
+# Install basic dependencies first
+echo "Installing basic dependencies..."
+pip install --no-cache-dir wheel setuptools-rust
+
+# Handle problematic packages separately
+echo "Installing onnxruntime separately..."
+pip install --no-cache-dir onnxruntime || pip install --no-cache-dir onnxruntime-cpu || {
+    echo "Failed to install onnxruntime-cpu, will continue without it"
+}
+
 # Setup cargo home in user directory to avoid permission issues
 export CARGO_HOME="$HOME/.cargo"
 mkdir -p $CARGO_HOME/registry/cache
@@ -34,26 +52,16 @@ if ! command -v cargo &> /dev/null; then
     source "$CARGO_HOME/env"
 fi
 
-# Set environment variables for optimized build
-export PYTHONHASHSEED=0
-export PIP_NO_CACHE_DIR=1
-export PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Install pip-tools to handle dependencies better
-pip install --no-cache-dir pip-tools
-
-# Handle maturin separately without using pip to avoid the Rust build issues
-echo "Handling problematic packages..."
-pip install --no-cache-dir --no-build-isolation wheel setuptools-rust
-
 # Install dependencies with optimized requirements for Render
 echo "Installing dependencies with memory optimization..."
 # Use requirements-render.txt first, fall back to requirements.txt
 if [ -f requirements-render.txt ]; then
-    pip install --no-cache-dir -r requirements-render.txt --no-deps || {
+    # Remove problematic onnxruntime-cpu from requirements
+    grep -v "onnxruntime" requirements-render.txt > requirements-render-modified.txt
+    pip install --no-cache-dir -r requirements-render-modified.txt --no-deps || {
         echo "Failed to install all dependencies at once, trying one by one..."
         # Extract package names, removing version specifications
-        cat requirements-render.txt | grep -v '^\s*#' | grep -v '^\s*$' | sed 's/[>=<]=.*$//' > packages.txt
+        cat requirements-render-modified.txt | grep -v '^\s*#' | grep -v '^\s*$' | sed 's/[>=<]=.*$//' > packages.txt
         while read -r package; do
             # Skip lines that look like options or URLs
             if [[ "$package" == --* ]] || [[ "$package" == http* ]]; then
@@ -64,7 +72,9 @@ if [ -f requirements-render.txt ]; then
         done < packages.txt
     }
 else
-    pip install --no-cache-dir -r requirements.txt --no-deps || {
+    # Remove problematic onnxruntime from requirements
+    grep -v "onnxruntime" requirements.txt > requirements-modified.txt
+    pip install --no-cache-dir -r requirements-modified.txt --no-deps || {
         echo "Failed to install dependencies, trying essential packages only..."
         pip install --no-cache-dir PyPDF2 pdfplumber transformers sentence-transformers torch scikit-learn numpy spacy tqdm pandas fastapi uvicorn python-multipart flask gunicorn psutil
     }
@@ -108,76 +118,37 @@ fi
 echo "Installed Python packages:"
 pip list
 
-# Enable optimization flags for model download
-export USE_QUANTIZED_MODEL=1
-export USE_TASK_SPECIFIC_MODELS=1
+# Enable offline mode for Hugging Face during model download
+export TRANSFORMERS_CACHE="$PWD/model_cache"
+export HF_HOME="$PWD/model_cache"
+export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+export HF_HUB_OFFLINE=0  # Allow online downloads during setup
 
-# Prepare the sentence transformer model for offline use
-echo "Preparing sentence transformer model for offline use..."
+# Fix for Hugging Face connectivity issues
+echo "Setting up Hugging Face models with backup downloads..."
+mkdir -p model_cache/huggingface
 
-# Check if the prepare_model_for_render.py script exists
-if [ -f scripts/prepare_model_for_render.py ]; then
-  python scripts/prepare_model_for_render.py || {
-    echo "Prepare script failed, falling back to standard download"
-    # Use the fallback download script if the special preparation fails
-    if [ -f scripts/download_models.py ]; then
-      python scripts/download_models.py
-    else
-      echo "No download_models.py script found. Checking sentence-transformers installation."
-      python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-    fi
-  }
-else
-  echo "No prepare_model_for_render.py script found, checking for download_models.py"
-  if [ -f scripts/download_models.py ]; then
-    python scripts/download_models.py
-  else
-    echo "No download_models.py script found. Using direct model initialization."
-    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-  fi
-fi
+# Try direct model download first
+python -c "
+from sentence_transformers import SentenceTransformer
+import os
 
-# Try to download task-specific models if the script exists
-if [ -f scripts/download_models.py ]; then
-  echo "Downloading task-specific models..."
-  python -c "
-  import os
-  import sys
-  sys.path.insert(0, '.') 
-  os.environ['USE_TASK_SPECIFIC_MODELS'] = '1'
-  try:
-    from scripts.download_models import download_task_specific_models
-    download_task_specific_models()
-  except Exception as e:
-    print(f'Error downloading task-specific models: {e}')
-  "
+# Set model cache directory
+os.environ['SENTENCE_TRANSFORMERS_HOME'] = os.path.join(os.getcwd(), 'model_cache', 'sentence_transformers')
 
-  echo "Preparing models for quantization..."
-  python -c "
-  import os
-  import sys
-  sys.path.insert(0, '.')
-  os.environ['USE_QUANTIZED_MODEL'] = '1'
-  try:
-    from scripts.download_models import prepare_quantized_models
-    prepare_quantized_models()
-  except Exception as e:
-    print(f'Error preparing quantized models: {e}')
-  "
-else
-  echo "No download_models.py script found for task-specific models."
-fi
+try:
+    print('Attempting to download SentenceTransformer model...')
+    # Use all-MiniLM-L6-v2 as it's smaller and works well
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    print('Successfully downloaded model')
+    # Test the model
+    test_embedding = model.encode(['Test sentence'])
+    print(f'Model successfully tested with shape {test_embedding.shape}')
+except Exception as e:
+    print(f'Error downloading model: {e}')
+" || echo "Warning: Failed to download sentence transformer model"
 
-# Verify the models are downloaded
-echo "Verifying model cache directory contents:"
-find model_cache -type f | wc -l
-du -sh model_cache
-ls -la model_cache || echo "No model_cache directory found"
-
-# Make model cache files accessible
-chmod -R 755 model_cache || echo "Could not set permissions on model_cache"
-
-# Set environment variables for offline use
+# Skip trying to run task specific and quantized model downloads if the main model failed
 echo "Setting environment variables for offline use..."
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1

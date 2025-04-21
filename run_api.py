@@ -66,6 +66,9 @@ def main():
     parser.add_argument("--use-quantization", action="store_true", help="Enable model quantization (8-bit) to reduce memory usage")
     parser.add_argument("--task-specific-models", action="store_true", help="Use task-specific models for different parts of analysis")
     parser.add_argument("--optimize-memory", action="store_true", help="Apply aggressive memory optimizations")
+    parser.add_argument("--fallback-to-cpu", action="store_true", help="Fallback to CPU if GPU is not available or fails")
+    parser.add_argument("--skip-onnx", action="store_true", help="Skip using ONNX runtime even if available")
+    parser.add_argument("--retries", type=int, default=3, help="Number of retries for model loading (default: 3)")
     
     args = parser.parse_args()
     
@@ -85,6 +88,19 @@ def main():
         os.environ["PYTORCH_JIT"] = "0"
         logger.info("Memory optimizations enabled")
     
+    if args.fallback_to_cpu:
+        os.environ["FALLBACK_TO_CPU"] = "1"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        logger.info("CPU fallback enabled")
+    
+    if args.skip_onnx:
+        os.environ["SKIP_ONNX"] = "1"
+        logger.info("ONNX runtime skipped")
+    
+    if args.retries:
+        os.environ["MODEL_LOAD_RETRIES"] = str(args.retries)
+        logger.info(f"Model load retries set to {args.retries}")
+    
     # Cap workers based on environment
     if ON_RENDER and args.workers > MAX_WORKERS:
         logger.warning(f"Reducing workers from {args.workers} to {MAX_WORKERS} for Render compatibility")
@@ -101,6 +117,7 @@ def main():
             logger.info(f"Models pre-loaded in {time.time() - start_time:.2f} seconds")
         except Exception as e:
             logger.error(f"Error pre-loading models: {e}")
+            logger.info("Continuing without pre-loaded models")
     
     # Determine which API implementation to use
     app_path = "src.api:app"  # Default to src/api.py
@@ -159,6 +176,10 @@ def main():
         optimizations.append("task-specific models")
     if args.optimize_memory:
         optimizations.append("memory optimizations")
+    if args.fallback_to_cpu:
+        optimizations.append("CPU fallback")
+    if args.skip_onnx:
+        optimizations.append("ONNX skipped")
     if optimizations:
         logger.info(f"Enabled optimizations: {', '.join(optimizations)}")
     

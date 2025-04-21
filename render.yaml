@@ -6,7 +6,7 @@ services:
       region: singapore
       plan: free
       buildCommand: "./render-build.sh"
-      startCommand: "python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models --use-quantization --task-specific-models --optimize-memory"
+      startCommand: "python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models --use-quantization --task-specific-models --optimize-memory --fallback-to-cpu --skip-onnx"
       envVars:
           - key: PYTHON_VERSION
             value: 3.10.8
@@ -56,6 +56,15 @@ services:
             value: true
           - key: ENABLE_DYNAMIC_RESOURCE_MANAGEMENT
             value: true
+          # Skip problematic dependencies
+          - key: SKIP_ONNX
+            value: 1
+          # Retry settings for model loading
+          - key: MODEL_LOAD_RETRIES
+            value: 3
+          # Tokenizer settings to reduce memory usage
+          - key: TOKENIZERS_PARALLELISM
+            value: false
       healthCheckPath: /health
 
 # A Redis instance for job queuing (optional, use if you need background processing)

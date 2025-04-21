@@ -22,8 +22,7 @@ tqdm==4.65.0
 pandas==2.0.0
 altair==4.0.0
 joblib==1.3.0
-# Using CPU version of onnxruntime to save space
-onnxruntime-cpu==1.16.0
+# Removed problematic onnxruntime-cpu
 packaging==23.0
 # Optimized Redis client
 redis==5.0.0
@@ -59,5 +58,4 @@ pympler==1.0.1
 pdfminer.six==20221105
 pymupdf==1.22.5
 pytesseract==0.3.10
-# Exclude unnecessary torch components
---no-binary :all: 
+# Remove maturin dependency completely 
