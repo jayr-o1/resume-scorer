@@ -73,4 +73,3 @@ services:
 databases:
     - name: resume-queue
       plan: free
-      type: redis
