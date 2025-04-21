@@ -68,16 +68,9 @@ services:
           maxInstances: 1
           targetMemoryPercent: 85
           targetCPUPercent: 80
-      resources:
-          limits:
-              memory: 512Mi
-              cpu: 0.3
-          requests:
-              memory: 256Mi
-              cpu: 0.1
 
 # A Redis instance for job queuing (optional, use if you need background processing)
 databases:
     - name: resume-queue
       plan: free
-      databaseType: redis
+      type: redis
