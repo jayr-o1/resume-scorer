@@ -1,11 +1,12 @@
 services:
+    # A web service to run the resume analyzer app
     - type: web
       name: resume-scorer-api
       env: python
-      region: oregon
-      plan: starter
+      region: singapore
+      plan: free
       buildCommand: "./render-build.sh"
-      startCommand: "cd api && gunicorn --bind=0.0.0.0:$PORT --workers=2 --threads=2 app:app --timeout 120"
+      startCommand: "python run_api.py --port=$PORT --host=0.0.0.0 --workers=1 --use-render --preload-models --use-quantization --task-specific-models --optimize-memory"
       envVars:
           - key: PYTHON_VERSION
             value: 3.10.8
@@ -53,29 +54,30 @@ services:
             value: ""
           - key: MODEL_WARMUP_ON_START
             value: true
-      plan: free
+          - key: ENABLE_DYNAMIC_RESOURCE_MANAGEMENT
+            value: true
       disk:
           name: resume-scorer-data
           mountPath: /opt/render/project/src/model_cache
-          sizeGB: 2
+          sizeGB: 1
       healthCheckPath: /health
       autoDeploy: false # Disable auto-deployment to save resources
       # Add sensible auto-scaling parameters for free tier
       scaling:
-          minInstances: 1
-          maxInstances: 2
+          minInstances: 0
+          maxInstances: 1
           targetMemoryPercent: 85
           targetCPUPercent: 80
       resources:
-        limits:
-          memory: 1Gi
-          cpu: 0.5
-        requests:
-          memory: 512Mi
-          cpu: 0.25
+          limits:
+              memory: 512Mi
+              cpu: 0.3
+          requests:
+              memory: 256Mi
+              cpu: 0.1
 
-# A Redis instance for job queuing
+# A Redis instance for job queuing (optional, use if you need background processing)
 databases:
-  - name: resume-queue
-    plan: free
-    type: redis
+    - name: resume-queue
+      plan: free
+      databaseType: redis
