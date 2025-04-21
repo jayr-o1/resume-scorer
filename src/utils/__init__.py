@@ -1,4 +1,6 @@
-"""Utilities for resume analysis"""
+"""
+Utility modules for resume analyzer.
+"""
 
 import os
 from pathlib import Path
