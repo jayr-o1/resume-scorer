@@ -26,8 +26,8 @@ CACHE_DIR.mkdir(exist_ok=True)
 DB_CACHE_PATH = CACHE_DIR / "cache.db"
 
 # Model constants
-MODEL_NAME = "all-mpnet-base-v2"  # Upgraded from all-MiniLM-L12-v2
-USE_QUANTIZED_MODEL = True  # Enable quantized model for faster inference
+MODEL_NAME = "all-MiniLM-L6-v2"  # Smaller model than all-mpnet-base-v2
+USE_QUANTIZED_MODEL = False  # Disable quantization to reduce memory usage
 
 # Thread-local storage for database connections
 local_storage = threading.local()

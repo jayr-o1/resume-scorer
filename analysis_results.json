@@ -1,0 +1,136 @@
+{
+  "match_percentage": "76",
+  "skills_match": {
+    "matched_skills": [
+      "javascript",
+      "react"
+    ],
+    "missing_skills": [
+      "python",
+      "api development"
+    ],
+    "additional_skills": [
+      "node"
+    ],
+    "alternative_skills": {},
+    "match_ratio": "2/4",
+    "skill_details": [
+      {
+        "name": "javascript",
+        "normalized_name": "javascript",
+        "proficiency": "unknown",
+        "experience": {
+          "context": "mentioned"
+        },
+        "category": "programming_language",
+        "related": [
+          "typescript",
+          "react",
+          "vue",
+          "angular",
+          "node"
+        ]
+      },
+      {
+        "name": "react",
+        "normalized_name": "react",
+        "proficiency": "unknown",
+        "experience": {
+          "context": "mentioned"
+        },
+        "category": "framework",
+        "related": [
+          "javascript",
+          "jsx",
+          "hooks",
+          "redux"
+        ]
+      }
+    ]
+  },
+  "experience": {
+    "required_years": "3",
+    "applicant_years": "6",
+    "percentage_impact": "+6%",
+    "job_titles": [
+      "SENIOR FRONTEND DEVELOPER",
+      "junior developer",
+      "Full Stack Developer",
+      "FRONTEND DEVELOPER",
+      "UI/UX designer",
+      "FULL STACK DEVELOPER"
+    ],
+    "employment_durations": [
+      {
+        "start_date": "01/2021",
+        "end_date": "Present",
+        "text": "01/2021 - Present",
+        "months": 51
+      },
+      {
+        "start_date": "06/2019",
+        "end_date": "12/2020",
+        "text": "06/2019 - 12/2020",
+        "months": 18
+      }
+    ],
+    "total_estimated_years": "6"
+  },
+  "education": {
+    "requirement": "Bachelor's degree",
+    "applicant_education": "Bachelor's degree",
+    "assessment": "Meets Requirement"
+  },
+  "certifications": {
+    "relevant_certs": [
+      "AWS Developer",
+      "AWS  CERTIFIED",
+      "Mongodb Certified",
+      "AWS Certified",
+      "Mongodb Developer"
+    ],
+    "percentage_impact": "+10%"
+  },
+  "keywords": {
+    "matched": "8",
+    "total": "18",
+    "match_ratio": "8/18"
+  },
+  "industry": {
+    "detected": "tech",
+    "confidence": "high"
+  },
+  "benchmark": {
+    "industry": "tech",
+    "benchmarks": {
+      "skills": 29,
+      "experience": 100,
+      "education": 100,
+      "overall": 76
+    }
+  },
+  "improvement_suggestions": {
+    "skills": [
+      "Add the following missing skills: python, api development",
+      "Use specific examples to demonstrate your listed skills"
+    ],
+    "experience": [
+      "Consider consolidating similar job titles to show progression"
+    ],
+    "education": [],
+    "general": []
+  },
+  "recommendation": "Hire",
+  "salary_estimate": {
+    "min": 90000,
+    "max": 230000,
+    "currency": "USD",
+    "note": "Estimation based on industry averages and skill demand"
+  },
+  "confidence_scores": {
+    "skills_match": 75.0,
+    "experience_match": 90,
+    "education_match": 90,
+    "overall": 44.47084069252014
+  }
+}
