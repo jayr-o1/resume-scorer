@@ -75,9 +75,10 @@ class ResumeAnalysisResponse(BaseModel):
     benchmark: Optional[Dict] = None
     improvement_suggestions: Optional[Dict] = None
     confidence_scores: Optional[Dict] = None
-    salary_estimate: Optional[Dict] = None
+    passing_details: Optional[Dict] = None
     error: Optional[str] = None
     resume_sections: Optional[Dict] = None
+    job_title: Optional[str] = None
 
 class BatchAnalysisRequest(BaseModel):
     job_summary: Optional[str] = None
@@ -117,6 +118,25 @@ def get_fallback_response(error_message, resume_sections=None):
         "certifications": {},
         "keywords": {},
         "industry": {},
+        "passing_details": {
+            "job_title": "the position",
+            "match_percentage": 0,
+            "status": "Error - please review",
+            "key_strengths": [],
+            "skills_analysis": {
+                "matched_count": 0,
+                "missing_count": 0,
+                "match_impact": "low"
+            },
+            "experience_analysis": {
+                "meets_requirement": False,
+                "impact": "low"
+            },
+            "education_analysis": {
+                "meets_requirement": False,
+                "impact": "low"
+            }
+        },
         "resume_sections": resume_sections or {}
     }
 
@@ -129,6 +149,7 @@ async def analyze_resume_endpoint(
     essential_skills: str = Form(None),
     qualifications: str = Form(None),
     industry_override: str = Form(None),
+    job_title: str = Form(None),
     translate: bool = Form(False)
 ):
     """
@@ -140,6 +161,7 @@ async def analyze_resume_endpoint(
     - **essential_skills**: Essential skills required
     - **qualifications**: Required qualifications and experience
     - **industry_override**: Override for auto-detected industry
+    - **job_title**: Job title for the position
     - **translate**: Whether to translate non-English resumes to English
     """
     try:
@@ -166,7 +188,8 @@ async def analyze_resume_endpoint(
                 "education": {},
                 "certifications": {},
                 "keywords": {},
-                "industry": {}
+                "industry": {},
+                "job_title": job_title or "Not specified"
             }
             
         if not extraction_result.get("text"):
@@ -178,7 +201,8 @@ async def analyze_resume_endpoint(
             "summary": job_summary or "",
             "duties": key_duties or "",
             "skills": essential_skills or "",
-            "qualifications": qualifications or ""
+            "qualifications": qualifications or "",
+            "job_title": job_title or ""
         }
         
         # Add industry override if provided
@@ -221,14 +245,21 @@ async def analyze_resume_endpoint(
             if resume_sections and not analysis.get("resume_sections"):
                 analysis["resume_sections"] = resume_sections
                 
+            # Add job title to response
+            analysis["job_title"] = job_title or analysis.get("passing_details", {}).get("job_title", "Not specified")
+                
             return analysis
         except Exception as e:
             logger.error(f"Error during resume analysis: {str(e)}")
-            return get_fallback_response(f"Analysis error: {str(e)}", resume_sections)
+            fallback = get_fallback_response(f"Analysis error: {str(e)}", resume_sections)
+            fallback["job_title"] = job_title or "Not specified"
+            return fallback
         
     except Exception as e:
         logger.error(f"Error processing resume: {str(e)}")
-        return get_fallback_response(f"Processing error: {str(e)}")
+        fallback = get_fallback_response(f"Processing error: {str(e)}")
+        fallback["job_title"] = job_title or "Not specified"
+        return fallback
 
 # Batch analyze endpoint
 @app.post("/batch-analyze")
@@ -239,40 +270,52 @@ async def batch_analyze_endpoint(
     essential_skills: str = Form(None),
     qualifications: str = Form(None),
     industry_override: str = Form(None),
+    job_title: str = Form(None),
     resumes: List[UploadFile] = File(...)
 ):
     """
-    Batch analyze multiple resumes against the same job description
+    Batch analyze multiple resumes against job details
     
     - **job_summary**: Job summary text
-    - **key_duties**: Key duties and responsibilities 
+    - **key_duties**: Key duties and responsibilities
     - **essential_skills**: Essential skills required
     - **qualifications**: Required qualifications and experience
     - **industry_override**: Override for auto-detected industry
-    - **resumes**: List of PDF resume files to analyze
+    - **job_title**: Job title for the position
+    - **resumes**: List of PDF resume files
     """
+    # Start batch processing
+    temp_files = []
+    results = {}
+    
     try:
+        # Save uploaded files
+        for resume in resumes:
+            if resume.filename and allowed_file(resume.filename):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                    temp_file.write(await resume.read())
+                    temp_files.append((resume.filename, temp_file.name))
+        
         # Convert job details to dict
         job_dict = {
             "summary": job_summary or "",
             "duties": key_duties or "",
             "skills": essential_skills or "",
-            "qualifications": qualifications or ""
+            "qualifications": qualifications or "",
+            "job_title": job_title or ""
         }
         
         # Add industry override if provided
         if industry_override and industry_override != "Auto-detect":
             job_dict["industry_override"] = industry_override
-            
-        # Save the uploaded files
-        temp_files = []
-        for resume in resumes:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                temp_file.write(await resume.read())
-                temp_files.append((resume.filename, temp_file.name))
         
-        # Run analysis in background task
-        results = {}
+        # Ensure job details are not empty
+        if not any(value for value in job_dict.values() if value):
+            job_dict = {
+                "summary": "Not provided",
+                "skills": "Not specified"
+            }
+        
         for filename, file_path in temp_files:
             # Extract text from PDF
             extraction_result = extract_text_from_pdf(file_path)
@@ -305,22 +348,51 @@ async def batch_analyze_endpoint(
                     if resume_sections and not analysis.get("resume_sections"):
                         analysis["resume_sections"] = resume_sections
                     
+                    # Add job title to response
+                    analysis["job_title"] = job_title or analysis.get("passing_details", {}).get("job_title", "Not specified")
+                    
                     results[filename] = analysis
                 except Exception as e:
-                    logger.error(f"Error analyzing resume {filename}: {str(e)}")
-                    results[filename] = get_fallback_response(f"Analysis error: {str(e)}")
+                    logger.error(f"Error analyzing {filename}: {str(e)}")
+                    fallback = get_fallback_response(f"Analysis error: {str(e)}", None)
+                    fallback["job_title"] = job_title or "Not specified"
+                    results[filename] = fallback
             else:
-                results[filename] = get_fallback_response("Could not extract text from PDF")
+                results[filename] = {
+                    "error": "Could not extract text from PDF",
+                    "match_percentage": "0%",
+                    "recommendation": "Please provide a valid PDF resume",
+                    "skills_match": {},
+                    "experience": {},
+                    "education": {},
+                    "certifications": {},
+                    "keywords": {},
+                    "industry": {},
+                    "job_title": job_title or "Not specified"
+                }
         
-        # Clean up temporary files
+        # Clean up files in the background
         for _, file_path in temp_files:
-            os.unlink(file_path)
-            
+            if os.path.exists(file_path):
+                background_tasks.add_task(os.unlink, file_path)
+        
         return {"results": results}
         
     except Exception as e:
         logger.error(f"Error in batch analysis: {str(e)}")
-        return {"error": str(e)}
+        
+        # Clean up files
+        for _, file_path in temp_files:
+            if os.path.exists(file_path):
+                try:
+                    os.unlink(file_path)
+                except:
+                    pass
+        
+        return {
+            "error": str(e),
+            "results": results
+        }
 
 # Skills ontology endpoint
 @app.get("/skills")

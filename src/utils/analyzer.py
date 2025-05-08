@@ -94,6 +94,9 @@ try:
 except (OSError, ImportError):
     logger.warning("SpaCy model not found. NER features will be limited.")
     SPACY_LOADED = False
+except Exception as e:
+    logger.warning(f"Error loading SpaCy model: {e}. NER features will be limited.")
+    SPACY_LOADED = False
 
 # Initialize the database cache
 def init_db_cache():
@@ -739,21 +742,40 @@ def get_improvement_suggestions(analysis_result: Dict) -> Dict[str, List[str]]:
         "general": []
     }
     
+    # Extract job title if available from job details
+    job_title = ""
+    # First, try to get it from the passing_details if available
+    if "passing_details" in analysis_result and "job_title" in analysis_result["passing_details"]:
+        job_title = analysis_result["passing_details"]["job_title"]
+    # If not found, try industry data as fallback
+    elif "industry" in analysis_result and "detected" in analysis_result["industry"]:
+        industry = analysis_result["industry"]["detected"].lower()
+        if "tech" in industry:
+            job_title = "technology role"
+        elif "finance" in industry:
+            job_title = "finance position"
+        elif "health" in industry:
+            job_title = "healthcare role"
+        else:
+            job_title = "this position"
+    else:
+        job_title = "this position"
+    
     # Skills suggestions
     missing_skills = analysis_result.get("skills_match", {}).get("missing_skills", [])
     alternative_skills = analysis_result.get("skills_match", {}).get("alternative_skills", {})
     
     if missing_skills:
-        suggestions["skills"].append(f"Add the following missing skills: {', '.join(missing_skills[:5])}")
+        suggestions["skills"].append(f"Add the following missing skills for {job_title}: {', '.join(missing_skills[:5])}")
         
         # Suggest alternatives based on what's already in the resume
         for missing_skill, alternatives in alternative_skills.items():
             if alternatives:
                 suggestions["skills"].append(
-                    f"Highlight your {', '.join(alternatives)} skills as they relate to {missing_skill}"
+                    f"Highlight your {', '.join(alternatives)} skills as they relate to {missing_skill} for {job_title}"
                 )
         
-        suggestions["skills"].append("Use specific examples to demonstrate your listed skills")
+        suggestions["skills"].append(f"Use specific examples to demonstrate your listed skills relevant to {job_title}")
     
     # Experience suggestions
     exp = analysis_result.get("experience", {})
@@ -766,10 +788,10 @@ def get_improvement_suggestions(analysis_result: Dict) -> Dict[str, List[str]]:
             app_years = int(applicant_years)
             
             if app_years < req_years:
-                suggestions["experience"].append(f"Highlight projects that demonstrate depth of knowledge to compensate for fewer years")
-                suggestions["experience"].append(f"Emphasize accomplishments that show expertise beyond your years of experience")
+                suggestions["experience"].append(f"Highlight projects that demonstrate depth of knowledge for {job_title} to compensate for fewer years")
+                suggestions["experience"].append(f"Emphasize accomplishments that show expertise in {job_title} beyond your years of experience")
             elif app_years > req_years + 5:
-                suggestions["experience"].append("Focus on recent and relevant achievements to avoid appearing overqualified")
+                suggestions["experience"].append(f"Focus on recent and relevant achievements in {job_title} to avoid appearing overqualified")
         except ValueError:
             pass
     
@@ -777,32 +799,32 @@ def get_improvement_suggestions(analysis_result: Dict) -> Dict[str, List[str]]:
     job_titles = exp.get("job_titles", [])
     if job_titles:
         if len(job_titles) > 3:
-            suggestions["experience"].append("Consider consolidating similar job titles to show progression")
+            suggestions["experience"].append(f"Consider consolidating similar job titles to show progression toward {job_title}")
     else:
-        suggestions["experience"].append("Make job titles more prominent in your resume")
+        suggestions["experience"].append(f"Make job titles more prominent in your resume, especially those related to {job_title}")
     
     # Education suggestions
     edu = analysis_result.get("education", {})
     if edu.get("assessment") == "Below Requirement":
-        suggestions["education"].append("Emphasize relevant professional certifications and training")
-        suggestions["education"].append("Highlight specific coursework relevant to the job requirements")
+        suggestions["education"].append(f"Emphasize relevant professional certifications and training for {job_title}")
+        suggestions["education"].append(f"Highlight specific coursework relevant to the {job_title} requirements")
         suggestions["education"].append("Consider adding ongoing education or professional development")
     
     # Certifications suggestions
     certs = analysis_result.get("certifications", {}).get("relevant_certs", [])
     if not certs:
-        suggestions["general"].append("Add industry-relevant certifications to strengthen your qualifications")
+        suggestions["general"].append(f"Add industry-relevant certifications for {job_title} to strengthen your qualifications")
     
     # General suggestions based on match percentage
     match_percentage = int(analysis_result.get("match_percentage", 0))
     if match_percentage < 70:
-        suggestions["general"].append("Tailor your resume more specifically to this job description")
-        suggestions["general"].append("Use more keywords from the job posting")
+        suggestions["general"].append(f"Tailor your resume more specifically to the {job_title} description")
+        suggestions["general"].append(f"Use more keywords from the {job_title} job posting")
         
         # Check if ATS format issues are likely
         if len(analysis_result.get("skills_match", {}).get("matched_skills", [])) < 3:
             suggestions["general"].append("Ensure your resume is in an ATS-friendly format")
-            suggestions["general"].append("Place a 'Skills' section near the top of your resume")
+            suggestions["general"].append(f"Place a 'Skills' section near the top of your resume highlighting abilities relevant to {job_title}")
     
     return suggestions
 
@@ -1406,14 +1428,6 @@ def analyze_resume(extraction_result, job_details):
             "education": education_info,
         })
         
-        # Salary estimation
-        salary_estimate = estimate_salary(
-            industry, 
-            int(experience_info.get("applicant_years", "0")) if experience_info.get("applicant_years", "0").isdigit() else 0,
-            skills_match_result.get("matched_skills", []),
-            education_info.get("applicant_education", "Not specified")
-        )
-        
         # Assemble final result
         analysis_result = {
             "match_percentage": match_percentage,
@@ -1424,7 +1438,9 @@ def analyze_resume(extraction_result, job_details):
             "certifications": certification_info,
             "improvement_suggestions": improvement_suggestions,
             "industry_benchmark": benchmark,
-            "salary_estimate": salary_estimate,
+            # Generate detailed passing information
+            "passing_details": get_passing_details(match_percentage, recommendation, skills_match_result, 
+                                                  experience_info, education_info, job_details),
             "analysis_date": time.time()
         }
         
@@ -1547,6 +1563,25 @@ def get_fallback_response(resume_text, job_details, error_message):
             "detected": "unknown",
             "confidence": 0,
             "percentage_impact": "+0%"
+        },
+        "passing_details": {
+            "job_title": "the position",
+            "match_percentage": max(20, match_percentage),
+            "status": "Error - please review",
+            "key_strengths": [],
+            "skills_analysis": {
+                "matched_count": match_count,
+                "missing_count": total_required - match_count,
+                "match_impact": "low"
+            },
+            "experience_analysis": {
+                "meets_requirement": False,
+                "impact": "low"
+            },
+            "education_analysis": {
+                "meets_requirement": False,
+                "impact": "low"
+            }
         }
     }
 
@@ -1621,24 +1656,42 @@ def format_analysis_result(analysis):
     if "error" in analysis:
         return f"Error: {analysis['error']}"
     
-    result = "AI Insights\n"
+    result = "AI Resume Analysis\n"
     result += f"Match Percentage:\n{analysis['match_percentage']}\n\n"
+    
+    # Get job title
+    job_title = "this position"
+    if "job_title" in analysis and analysis["job_title"]:
+        job_title = analysis["job_title"]
+    elif "passing_details" in analysis and "job_title" in analysis["passing_details"]:
+        job_title = analysis["passing_details"]["job_title"]
+    
+    # Passing details
+    if "passing_details" in analysis:
+        passing = analysis["passing_details"]
+        result += "Application Status:\n"
+        result += f"{passing['status']} for {job_title}\n\n"
+        
+        if passing.get("key_strengths"):
+            result += "Key Strengths:\n"
+            for strength in passing["key_strengths"]:
+                result += f"- {strength}\n"
+            result += "\n"
     
     # Industry information
     if "industry" in analysis:
-        result += f"Industry:\n{analysis['industry']['detected'].capitalize()} (Confidence: {analysis['industry']['confidence']})\n\n"
+        result += f"Industry:\n{analysis['industry']['detected'].capitalize()}\n\n"
     
     # Skills match
     skills = analysis['skills_match']
-    result += f"Skills Match:\n{', '.join(skills['matched_skills'])} ({skills['match_ratio']})\n\n"
+    result += f"Skills Match:\n{', '.join(skills['matched_skills'][:5])} ({skills['match_ratio']})\n\n"
     
-    # Additional skills
-    if "additional_skills" in skills and skills["additional_skills"]:
-        result += f"Additional Skills Detected:\n{', '.join(skills['additional_skills'])}\n\n"
+    if skills.get("missing_skills"):
+        result += f"Missing Skills for {job_title}:\n{', '.join(skills['missing_skills'][:5])}\n\n"
     
     # Experience
     exp = analysis['experience']
-    result += f"Experience:\nRequired: {exp['required_years']} | Applicant: {exp['applicant_years']} ({exp['percentage_impact']})\n\n"
+    result += f"Experience:\nRequired: {exp['required_years']} | Applicant: {exp['applicant_years']}\n\n"
     
     # Education
     edu = analysis['education']
@@ -1646,27 +1699,14 @@ def format_analysis_result(analysis):
     
     # Certifications
     certs = analysis['certifications']
-    if certs['relevant_certs']:
-        result += f"Certifications:\n{', '.join(certs['relevant_certs'])} ({certs['percentage_impact']})\n\n"
-    else:
-        result += "Certifications:\nNone\n\n"
-    
-    # Keywords
-    kw = analysis['keywords']
-    result += f"Resume Keywords:\nMatched {kw['match_ratio']}\n\n"
-    
-    # Industry benchmark
-    if "benchmark" in analysis:
-        bench = analysis["benchmark"]["benchmarks"]
-        result += f"Industry Benchmarks:\n"
-        result += f"Skills: {bench['skills']}% | Experience: {bench['experience']}% | "
-        result += f"Education: {bench['education']}% | Overall: {bench['overall']}%\n\n"
+    if certs.get('relevant_certs'):
+        result += f"Certifications:\n{', '.join(certs['relevant_certs'])}\n\n"
     
     # Improvement suggestions
     if "improvement_suggestions" in analysis:
         sugg = analysis["improvement_suggestions"]
         if any(sugg.values()):
-            result += "Improvement Suggestions:\n"
+            result += f"Improvement Suggestions for {job_title}:\n"
             for category, items in sugg.items():
                 if items:
                     result += f"- {items[0]}\n"
@@ -1674,10 +1714,10 @@ def format_analysis_result(analysis):
     
     # Recommendation
     rec = analysis['recommendation']
-    emoji = "✅" if "hire" in rec.lower() else "❌"
-    result += f"Recommendation:\n{rec} {emoji}"
+    emoji = "✅" if "hire" in rec.lower() else "❓" if "interview" in rec.lower() else "❌"
+    result += f"Recommendation:\n{rec} {emoji} for {job_title}"
     
-    return result 
+    return result
 
 def batch_process_resumes(resume_files, job_details, n_jobs=-1):
     """
@@ -1823,3 +1863,107 @@ def get_embedding_batch(texts: List[str], model=None, task: str = "general", bat
         embeddings.append(embedding)
     
     return np.array(embeddings) 
+
+def get_passing_details(match_percentage: int, recommendation: str, skills_match: Dict, 
+                       experience_info: Dict, education_info: Dict, job_details: Dict) -> Dict:
+    """
+    Generate detailed information about how the applicant passed or failed the resume scoring system
+    
+    Args:
+        match_percentage: Overall match percentage
+        recommendation: Recommendation result (Hire, Interview, Reject)
+        skills_match: Skills matching information
+        experience_info: Experience analysis information
+        education_info: Education analysis information
+        job_details: Original job details
+    
+    Returns:
+        Dictionary with detailed passing information
+    """
+    job_title = ""
+    for key in ["summary", "duties", "skills", "qualifications"]:
+        if key in job_details and job_details[key]:
+            # Look for common job title patterns in the first 200 characters
+            job_text = job_details[key][:200].lower()
+            title_patterns = [
+                r"(job title|position):\s*([a-z\s]+)",
+                r"(job|position):\s*([a-z\s]+)",
+                r"hiring\s+([a-z\s]+)",
+                r"looking for\s+([a-z\s]+)",
+                r"^([a-z\s]+)\s+position"
+            ]
+            for pattern in title_patterns:
+                match = re.search(pattern, job_text)
+                if match:
+                    job_title = match.group(2).strip() if len(match.groups()) > 1 else match.group(1).strip()
+                    break
+            if job_title:
+                break
+    
+    # Default job title if not found
+    if not job_title:
+        job_title = "this position"
+    
+    # Get key strengths
+    strengths = []
+    
+    # Skills strength
+    matched_skills = skills_match.get("matched_skills", [])
+    if matched_skills:
+        skill_strength = ""
+        if len(matched_skills) >= 5:
+            skill_strength = "excellent skills match"
+        elif len(matched_skills) >= 3:
+            skill_strength = "good skills match"
+        else:
+            skill_strength = "some matching skills"
+        
+        strengths.append(skill_strength)
+    
+    # Experience strength
+    required_years = experience_info.get("required_years", "Not specified")
+    applicant_years = experience_info.get("applicant_years", "Not specified")
+    
+    if required_years != "Not specified" and applicant_years != "Not specified":
+        try:
+            req_years = int(required_years)
+            app_years = int(applicant_years)
+            
+            if app_years >= req_years + 2:
+                strengths.append("extensive experience")
+            elif app_years >= req_years:
+                strengths.append("sufficient experience")
+            elif app_years >= req_years - 1:
+                strengths.append("nearly sufficient experience")
+        except ValueError:
+            pass
+    
+    # Education strength
+    edu_assessment = education_info.get("assessment", "")
+    if edu_assessment == "Meets Requirement":
+        strengths.append("required education")
+    elif edu_assessment == "Exceeds Requirement":
+        strengths.append("advanced education")
+    
+    # Structure the passing details
+    passing_details = {
+        "job_title": job_title,
+        "match_percentage": match_percentage,
+        "status": recommendation,
+        "key_strengths": strengths,
+        "skills_analysis": {
+            "matched_count": len(matched_skills),
+            "missing_count": len(skills_match.get("missing_skills", [])),
+            "match_impact": "high" if match_percentage >= 70 else "medium" if match_percentage >= 50 else "low"
+        },
+        "experience_analysis": {
+            "meets_requirement": experience_info.get("meets_requirement", False),
+            "impact": "high" if "experience" in strengths else "medium" if applicant_years != "Not specified" else "low"
+        },
+        "education_analysis": {
+            "meets_requirement": edu_assessment in ["Meets Requirement", "Exceeds Requirement"],
+            "impact": "high" if "education" in strengths else "medium" if edu_assessment == "No Requirement" else "low"
+        }
+    }
+    
+    return passing_details 
