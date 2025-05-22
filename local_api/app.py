@@ -4,6 +4,7 @@ import time
 import tempfile
 import hashlib
 import logging
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Union, Any
@@ -150,7 +151,11 @@ async def analyze_resume_endpoint(
     qualifications: str = Form(None),
     industry_override: str = Form(None),
     job_title: str = Form(None),
-    translate: bool = Form(False)
+    translate: bool = Form(False),
+    skills_weight: float = Form(None, description="Weight for skills (must be > experience_weight > education_weight, all sum to 1.0)"),
+    experience_weight: float = Form(None, description="Weight for experience (must be < skills_weight and > education_weight)"),
+    education_weight: float = Form(None, description="Weight for education (must be < experience_weight)"),
+    weights: str = Form(None, description="JSON string specifying weights for skills, experience, and education")
 ):
     """
     Analyze a resume against job details
@@ -163,6 +168,9 @@ async def analyze_resume_endpoint(
     - **industry_override**: Override for auto-detected industry
     - **job_title**: Job title for the position
     - **translate**: Whether to translate non-English resumes to English
+    - **skills_weight**: Custom weight for skills (float, must be > experience_weight > education_weight, all sum to 1.0)
+    - **experience_weight**: Custom weight for experience (float)
+    - **education_weight**: Custom weight for education (float)
     """
     try:
         # Save the uploaded file
@@ -204,11 +212,25 @@ async def analyze_resume_endpoint(
             "qualifications": qualifications or "",
             "job_title": job_title or ""
         }
-        
         # Add industry override if provided
         if industry_override and industry_override != "Auto-detect":
             job_dict["industry_override"] = industry_override
-        
+        # Add weights from JSON string if provided
+        if weights:
+            try:
+                parsed_weights = json.loads(weights)
+                if all(k in parsed_weights for k in ("skills", "experience", "education")):
+                    job_dict["weights"] = parsed_weights
+            except Exception as e:
+                logger.warning(f"Failed to parse weights JSON: {e}")
+        # Add weights from individual fields if all are provided and not already set
+        if (skills_weight is not None and experience_weight is not None and education_weight is not None
+            and "weights" not in job_dict):
+            job_dict["weights"] = {
+                "skills": skills_weight,
+                "experience": experience_weight,
+                "education": education_weight
+            }
         # Ensure job details are not empty
         if not any(value for value in job_dict.values() if value):
             job_dict = {

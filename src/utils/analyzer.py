@@ -52,38 +52,30 @@ INDUSTRY_KEYWORDS = {
     "tech": {
         "keywords": ["software", "development", "programming", "cloud", "devops", "api", 
                     "frontend", "backend", "fullstack", "web", "mobile", "data", "ai", "ml"],
-        "skills_weight": 0.35,
-        "exp_weight": 0.25,
-        "edu_weight": 0.15,
-        "cert_weight": 0.15,
-        "keyword_weight": 0.10
+        "skills_weight": 0.5,
+        "exp_weight": 0.3,
+        "edu_weight": 0.2
     },
     "finance": {
         "keywords": ["financial", "accounting", "banking", "investment", "trading", "portfolio", 
                     "analysis", "compliance", "risk", "audit", "tax", "regulatory"],
-        "skills_weight": 0.25,
-        "exp_weight": 0.30,
-        "edu_weight": 0.20,
-        "cert_weight": 0.15,
-        "keyword_weight": 0.10
+        "skills_weight": 0.5,
+        "exp_weight": 0.3,
+        "edu_weight": 0.2
     },
     "healthcare": {
         "keywords": ["clinical", "patient", "medical", "health", "care", "nursing", 
                     "physician", "treatment", "pharmacy", "biotech", "research"],
-        "skills_weight": 0.30,
-        "exp_weight": 0.25,
-        "edu_weight": 0.20,
-        "cert_weight": 0.15, 
-        "keyword_weight": 0.10
+        "skills_weight": 0.5,
+        "exp_weight": 0.3,
+        "edu_weight": 0.2
     },
     "marketing": {
         "keywords": ["marketing", "brand", "social media", "campaign", "digital", 
                     "seo", "content", "analytics", "strategy", "advertising"],
-        "skills_weight": 0.35,
-        "exp_weight": 0.20,
-        "edu_weight": 0.15,
-        "cert_weight": 0.10,
-        "keyword_weight": 0.20
+        "skills_weight": 0.5,
+        "exp_weight": 0.3,
+        "edu_weight": 0.2
     }
 }
 
@@ -994,6 +986,30 @@ def estimate_total_experience(durations: List[Dict[str, str]]) -> int:
     # Convert to years, rounded
     return round(total_months / 12)
 
+def extract_years_from_text(text: str) -> Optional[int]:
+    """Extract required years of experience from job description text"""
+    if not text:
+        return None
+        
+    # Common patterns for years of experience
+    patterns = [
+        r'(\d+)\+?\s+years?\s+(?:of\s+)?experience',
+        r'experience\s+(?:of\s+)?(\d+)\+?\s+years?',
+        r'(\d+)-year\s+(?:of\s+)?experience',
+        r'minimum\s+of\s+(\d+)\s+years?\s+(?:of\s+)?experience',
+        r'at least\s+(\d+)\s+years?\s+(?:of\s+)?experience'
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text.lower())
+        if matches:
+            try:
+                return int(matches[0])
+            except (ValueError, IndexError):
+                continue
+    
+    return None
+
 def analyze_resume(extraction_result, job_details):
     """
     Analyze a resume against job requirements
@@ -1030,8 +1046,9 @@ def analyze_resume(extraction_result, job_details):
             }
         
         # Generate cache path and hash key
-        cache_path = get_cache_path(resume_text, job_text)
-        hash_key = get_hash_key(resume_text + job_text)
+        weights_str = json.dumps(weights, sort_keys=True) if 'weights' in locals() and weights else ""
+        cache_path = get_cache_path(resume_text, job_text + weights_str)
+        hash_key = get_hash_key(resume_text + job_text + weights_str)
         
         # Try DB cache first
         cached_result = load_from_db_cache(hash_key)
@@ -1044,7 +1061,12 @@ def analyze_resume(extraction_result, job_details):
         if cached_result:
             logger.info("Analysis loaded from file cache")
             return cached_result
-        
+
+        # Get industry from job details or detect it
+        industry = job_details.get("industry", "tech")  # Default to tech if not specified
+        if industry not in INDUSTRY_KEYWORDS:
+            industry = get_industry_from_text(resume_text, job_details)
+
         # Prepare model for semantic analysis
         use_task_specific = MODEL_MANAGER_AVAILABLE and USE_TASK_SPECIFIC_MODELS
         model = None
@@ -1322,27 +1344,31 @@ def analyze_resume(extraction_result, job_details):
         
         # ======== OVERALL ANALYSIS ========
         # Calculate match percentage based on skills, experience, education
-        weights = {
-            "skills": 0.5,
-            "experience": 0.3,
-            "education": 0.15,
-            "certifications": 0.05
-        }
-        
-        # Adjust weights based on job industry if available
-        industry = get_industry_from_text(job_text, job_details)
-        if industry in INDUSTRY_KEYWORDS:
-            industry_weights = INDUSTRY_KEYWORDS[industry]
+        # Accept weights as a parameter (from job_details or direct argument)
+        user_weights = job_details.get("weights") if isinstance(job_details, dict) else None
+        if user_weights and all(k in user_weights for k in ("skills", "experience", "education")):
             weights = {
-                "skills": industry_weights["skills_weight"],
-                "experience": industry_weights["exp_weight"],
-                "education": industry_weights["edu_weight"],
-                "certifications": industry_weights["cert_weight"]
+                "skills": float(user_weights["skills"]),
+                "experience": float(user_weights["experience"]),
+                "education": float(user_weights["education"])
             }
+        else:
+            weights = {"skills": 0.5, "experience": 0.3, "education": 0.2}
+        
+        # Normalize weights if they are integers (1-100)
+        if weights and all(isinstance(v, (int, float)) for v in weights.values()):
+            total = sum(weights.values())
+            # Cap the sum at 100 and scale down if needed
+            if total > 100:
+                scale = 100 / total
+                weights = {k: v * scale for k, v in weights.items()}
+                total = 100
+            # Normalize to sum to 1.0
+            if total > 0:
+                weights = {k: v / total for k, v in weights.items()}
         
         # Calculate individual scores
         skill_score = len(skills_match_result["matched_skills"]) / max(1, len(required_skills)) * 100
-        
         exp_score = 0
         if required_experience and isinstance(required_experience, (int, float)):
             try:
@@ -1351,7 +1377,6 @@ def analyze_resume(extraction_result, job_details):
                     applicant_exp = int(applicant_exp)
                 elif not isinstance(applicant_exp, (int, float)):
                     applicant_exp = 0
-                
                 if applicant_exp >= required_experience:
                     exp_score = 100
                 else:
@@ -1360,15 +1385,12 @@ def analyze_resume(extraction_result, job_details):
                 exp_score = 50  # Default if we can't calculate
         else:
             exp_score = 80  # No specific requirement
-        
-        # Education score
         edu_score = 0
         if education_info["assessment"] == "Meets Requirement":
             edu_score = 100
         elif education_info["assessment"] == "No Requirement":
             edu_score = 80
         elif education_info["assessment"] == "Below Requirement":
-            # Give partial credit
             edu_levels = {
                 "PhD/Doctorate": 5, 
                 "Master's degree": 4, 
@@ -1383,27 +1405,17 @@ def analyze_resume(extraction_result, job_details):
                 edu_score = (applicant_level / required_level) * 100
             else:
                 edu_score = 50
-        
-        # Certification score
-        cert_score = 0
-        if certification_info["job_requires_certs"]:
-            if certification_info["has_certifications"]:
-                cert_score = 100
-            else:
-                cert_score = 0
-        else:
-            cert_score = 70  # Not required but good to have
-        
-        # Calculate weighted score
+        # Debug logging for weights and scores
+        logger.info(f"Scoring Weights Used: {weights}")
+        logger.info(f"Skill Score: {skill_score}, Experience Score: {exp_score}, Education Score: {edu_score}")
+        # Calculate weighted score (no certs/keywords)
         match_percentage = (
             weights["skills"] * skill_score +
             weights["experience"] * exp_score +
-            weights["education"] * edu_score +
-            weights["certifications"] * cert_score
+            weights["education"] * edu_score
         )
-        
-        # Round to nearest integer
         match_percentage = round(match_percentage)
+        logger.info(f"Final Match Percentage: {match_percentage}")
         
         # Generate recommendation
         recommendation = "Reject"
@@ -1441,7 +1453,12 @@ def analyze_resume(extraction_result, job_details):
             # Generate detailed passing information
             "passing_details": get_passing_details(match_percentage, recommendation, skills_match_result, 
                                                   experience_info, education_info, job_details),
-            "analysis_date": time.time()
+            "analysis_date": time.time(),
+            # Debug info for user
+            "_debug_weights": weights,
+            "_debug_skill_score": skill_score,
+            "_debug_exp_score": exp_score,
+            "_debug_edu_score": edu_score
         }
         
         # Save to cache
