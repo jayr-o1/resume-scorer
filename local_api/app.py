@@ -215,22 +215,30 @@ async def analyze_resume_endpoint(
         # Add industry override if provided
         if industry_override and industry_override != "Auto-detect":
             job_dict["industry_override"] = industry_override
+            
+        # Ensure unique caching for different weight configurations
         # Add weights from JSON string if provided
         if weights:
             try:
                 parsed_weights = json.loads(weights)
                 if all(k in parsed_weights for k in ("skills", "experience", "education")):
                     job_dict["weights"] = parsed_weights
+                    # Add a cache-busting timestamp to force a new analysis
+                    job_dict["request_timestamp"] = str(time.time())
             except Exception as e:
                 logger.warning(f"Failed to parse weights JSON: {e}")
-        # Add weights from individual fields if all are provided and not already set
-        if (skills_weight is not None and experience_weight is not None and education_weight is not None
-            and "weights" not in job_dict):
+                
+        # Add weights from individual fields if all are provided
+        if skills_weight is not None and experience_weight is not None and education_weight is not None:
+            # Add the weights even if already set from JSON, as individual fields should override
             job_dict["weights"] = {
                 "skills": skills_weight,
                 "experience": experience_weight,
                 "education": education_weight
             }
+            # Add a cache-busting timestamp to force a new analysis
+            job_dict["request_timestamp"] = str(time.time())
+            
         # Ensure job details are not empty
         if not any(value for value in job_dict.values() if value):
             job_dict = {

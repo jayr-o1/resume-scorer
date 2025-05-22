@@ -1033,8 +1033,18 @@ def analyze_resume(extraction_result, job_details):
         
         # Combine job details into a single text for analysis
         job_text = ""
+        job_meta = {}
         for key, value in job_details.items():
-            if isinstance(value, str) and value.strip():
+            if key == "weights" and isinstance(value, dict):
+                # Add weights as a JSON string
+                job_meta["weights"] = json.dumps(value, sort_keys=True)
+            elif key == "request_timestamp":
+                # Include timestamp to ensure new requests get new responses
+                job_meta["timestamp"] = value
+            elif key == "industry_override":
+                # Include industry override
+                job_meta["industry"] = value
+            elif isinstance(value, str) and value.strip():
                 job_text += value.strip() + "\n\n"
         
         if not job_text:
@@ -1045,10 +1055,14 @@ def analyze_resume(extraction_result, job_details):
                 "recommendation": "Insufficient data"
             }
         
-        # Generate cache path and hash key
-        weights_str = json.dumps(weights, sort_keys=True) if 'weights' in locals() and weights else ""
-        cache_path = get_cache_path(resume_text, job_text + weights_str)
-        hash_key = get_hash_key(resume_text + job_text + weights_str)
+        # Generate cache path and hash key with all parameters
+        cache_key_components = resume_text + job_text
+        # Add all metadata as a JSON string
+        if job_meta:
+            cache_key_components += json.dumps(job_meta, sort_keys=True)
+            
+        hash_key = get_hash_key(cache_key_components)
+        cache_path = CACHE_DIR / f"{hash_key}.pkl"
         
         # Try DB cache first
         cached_result = load_from_db_cache(hash_key)
@@ -1151,7 +1165,8 @@ def analyze_resume(extraction_result, job_details):
                         "matched_skills": matched_skills,
                         "missing_skills": missing_skills,
                         "proficiency": skills_data.get("proficiency", {}),
-                        "confidence": 0.85  # Rule-based typically has high confidence
+                        "confidence": 0.85,  # Rule-based typically has high confidence
+                        "match_ratio": f"{len(matched_skills)}/{len(matched_skills) + len(missing_skills)}"
                     }
                 else:
                     # For embedding-based skill matching
@@ -1175,7 +1190,8 @@ def analyze_resume(extraction_result, job_details):
                     skills_match_result = {
                         "matched_skills": matched_skills,
                         "missing_skills": missing_skills,
-                        "confidence": 0.75
+                        "confidence": 0.75,
+                        "match_ratio": f"{len(matched_skills)}/{len(matched_skills) + len(missing_skills)}"
                     }
             except Exception as e:
                 logger.warning(f"Error using skills-specific model: {e}")
@@ -1216,7 +1232,8 @@ def analyze_resume(extraction_result, job_details):
                 "matched_skills": matched_skills,
                 "missing_skills": missing_skills,
                 "alternative_skills": alternative_skills,
-                "confidence": 0.7
+                "confidence": 0.7,
+                "match_ratio": f"{len(matched_skills)}/{len(matched_skills) + len(missing_skills)}"
             }
         
         # ======== EDUCATION ANALYSIS ========
@@ -1461,15 +1478,21 @@ def analyze_resume(extraction_result, job_details):
             "_debug_edu_score": edu_score
         }
         
-        # Save to cache
+        # Log the completion of analysis
+        logger.info("Analysis complete")
+        
+        # Format the analysis result for display purposes only (don't replace the original)
+        formatted_text = format_analysis_result(analysis_result)
+        
+        # Save the original result to both file and DB cache (not the formatted string)
         save_to_cache(cache_path, analysis_result)
         save_to_db_cache(hash_key, analysis_result)
         
         return analysis_result
-        
     except Exception as e:
-        logger.error(f"Error analyzing resume: {e}")
+        logger.error(f"Error during resume analysis: {e}")
         logger.error(traceback.format_exc())
+        # Return a fallback response when an error occurs
         return get_fallback_response(resume_text, job_details, str(e))
 
 def standard_education_analysis(highest_edu, required_education):
@@ -1701,7 +1724,20 @@ def format_analysis_result(analysis):
     
     # Skills match
     skills = analysis['skills_match']
-    result += f"Skills Match:\n{', '.join(skills['matched_skills'][:5])} ({skills['match_ratio']})\n\n"
+    matched_skills = skills.get('matched_skills', [])
+    
+    # Calculate match_ratio if not present
+    match_ratio = skills.get('match_ratio')
+    if not match_ratio:
+        missing_count = len(skills.get('missing_skills', []))
+        matched_count = len(matched_skills)
+        total = matched_count + missing_count
+        if total > 0:
+            match_ratio = f"{matched_count}/{total}"
+        else:
+            match_ratio = "0/0"
+        
+    result += f"Skills Match:\n{', '.join(matched_skills[:5])} ({match_ratio})\n\n"
     
     if skills.get("missing_skills"):
         result += f"Missing Skills for {job_title}:\n{', '.join(skills['missing_skills'][:5])}\n\n"
