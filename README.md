@@ -149,3 +149,59 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the terms of the MIT license.
+
+## Deploying to Modal
+
+This application can be deployed to [Modal](https://modal.com/) for easy hosting in the cloud. Follow these steps to deploy:
+
+### Prerequisites
+
+1. Install Modal CLI and authenticate:
+   ```
+   pip install modal
+   modal token new
+   ```
+
+2. Make sure you have all the necessary files in your project:
+   - `modal_app.py` - Contains the Modal application definition
+   - `modal_deploy.py` - Script to deploy the application
+   - `local_api/app.py` - FastAPI application that will be deployed
+
+### Deployment Steps
+
+1. Run the deployment script:
+   ```
+   python modal_deploy.py
+   ```
+
+2. The script will:
+   - Download and cache necessary models to a Modal volume
+   - Deploy the FastAPI application to Modal
+   - Provide a URL where your application is accessible
+
+3. Once deployed, your API will be available at:
+   ```
+   https://resume-scorer--app.modal.run
+   ```
+
+### API Endpoints
+
+The following endpoints will be available after deployment:
+
+- `GET /health` - Health check endpoint
+- `POST /analyze` - Analyze a resume against job details
+- `POST /batch-analyze` - Batch analyze multiple resumes
+- `GET /skills` - Get the entire skill ontology
+- `POST /skills` - Add a new skill to the ontology
+- `POST /debug/extract` - Debug endpoint to extract text from a PDF
+
+## Local Development
+
+To run the application locally:
+
+```
+cd local_api
+python app.py
+```
+
+This will start the FastAPI server on your local machine.
